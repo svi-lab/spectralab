@@ -4,7 +4,7 @@ High-level spectral denoising: :class:`Denoiser`.
 
 PCA-based reconstruction for multi-spectrum inputs (2D/3D).  For 1-D single
 spectra — or any input when ``per_spectrum=True`` — delegates automatically
-to :class:`~wdfkit.spectra_smoother.SpectraSmoother` (Savitzky-Golay by
+to :class:`~spectra_smoother.SpectraSmoother` (Savitzky-Golay by
 default).
 """
 
@@ -43,7 +43,7 @@ class Denoiser:
 
     **1-D single spectrum** ``(spectral,)`` or any input when
     ``per_spectrum=True``: delegates to
-    :class:`~wdfkit.spectra_smoother.SpectraSmoother` (Savitzky-Golay by
+    :class:`~spectra_smoother.SpectraSmoother` (Savitzky-Golay by
     default).  Pass a pre-configured ``SpectraSmoother`` via the ``smoother``
     parameter to change the method or its settings.
 
@@ -69,7 +69,7 @@ class Denoiser:
         every spectrum regardless of input dimensionality.  Useful when
         you want 1-D-style smoothing on a 2D/3D dataset.
     smoother
-        A :class:`~wdfkit.spectra_smoother.SpectraSmoother` instance used
+        A :class:`~spectra_smoother.SpectraSmoother` instance used
         for 1-D input and when ``per_spectrum=True``.  ``None`` (default)
         creates a ``SpectraSmoother()`` with Savitzky-Golay defaults.
     """

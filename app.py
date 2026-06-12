@@ -3,6 +3,7 @@
 import sys
 from pathlib import Path
 
+# Lets backend sub-packages use plain imports (e.g. `from cosmic_ray import ...`)
 sys.path.insert(0, str(Path(__file__).parent / "backend"))
 
 import streamlit as st

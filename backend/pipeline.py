@@ -17,7 +17,7 @@ from spectra_cleaner import Denoiser
 from spectra_smoother import SpectraSmoother
 from _shared.clean_data import CleanData
 from _shared.normalize import normalize
-from _shared.dataset import SpectralDataset, _validate
+from _shared.dataset import SpectralDataset, validate_spectral_dataset
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +95,7 @@ def load_wdf(file_bytes: bytes) -> SpectralDataset:
         except (TypeError, ValueError):
             return float("nan")
 
-    is_valid, validation_msg = _validate(da, spectral_units)
+    is_valid, validation_msg = validate_spectral_dataset(da, spectral_units)
 
     return SpectralDataset(
         da             = da,

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 import numpy as np
@@ -351,7 +352,6 @@ def correct_cosmic_rays_collection(
         flagged_frac = core_mask_p1.mean(axis=1)
         clean_idx = np.where(flagged_frac < 0.20)[0]
         if clean_idx.size < k + 2:
-            import warnings
             warnings.warn(
                 f"CosmicRayRemover (PCA): only {clean_idx.size} clean spectra available "
                 f"for pass-2 reference (need ≥ {k + 2}). "

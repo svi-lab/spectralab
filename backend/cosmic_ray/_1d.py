@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 from scipy.signal import medfilt
 
@@ -197,7 +199,6 @@ def remove_cosmic_rays_1d(
         cumulative_mask |= new_mask
 
         if np.all(cumulative_mask):
-            import warnings
             warnings.warn(
                 "remove_cosmic_rays_1d: all spectral channels flagged — "
                 "returning original spectrum unchanged.",
