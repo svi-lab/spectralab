@@ -14,7 +14,7 @@ _KNOWN_UNITS = frozenset(
 )
 
 
-def _validate(da: xr.DataArray, spectral_units: str) -> tuple[bool, str]:
+def validate_spectral_dataset(da: xr.DataArray, spectral_units: str) -> tuple[bool, str]:
     if not spectral_units:
         return False, "Spectral units not found in file"
     if spectral_units not in _KNOWN_UNITS:
