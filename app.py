@@ -8,13 +8,15 @@ sys.path.insert(0, str(Path(__file__).parent / "backend"))
 
 import streamlit as st
 
-from frontend.left_panel import render_left_panel
-from frontend.tabs import render_tabs
+from frontend.sidebar import render_sidebar
+from frontend.pages.preprocessing import render_preprocessing_page
+from frontend.pages.map_analysis import render_map_page
+from frontend.pages.deconvolution import render_deconvolution_page
 
 st.set_page_config(
     page_title="SpectraLab",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 st.markdown("""
@@ -52,10 +54,15 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-left, right = st.columns([1, 2], gap="medium")
+with st.sidebar:
+    render_sidebar()
 
-with left:
-    state = render_left_panel()
-
-with right:
-    render_tabs(state)
+pg = st.navigation([
+    st.Page(render_preprocessing_page, title="Preprocessing",
+            icon=":material/tune:", default=True),
+    st.Page(render_map_page,           title="Map Analysis",
+            icon=":material/map:"),
+    st.Page(render_deconvolution_page, title="Deconvolution",
+            icon=":material/timeline:"),
+])
+pg.run()

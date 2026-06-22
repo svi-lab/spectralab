@@ -18,16 +18,67 @@ FS_CBAR  = 18
 
 def _colorbar(title: str) -> dict:
     return dict(
-        title=dict(text=title, font=dict(size=FS_CBAR)),
-        tickfont=dict(size=FS_CBAR),
+        orientation="h",
+        x=0.5,
+        xanchor="center",
+        y=-0.30,
+        yanchor="top",
+        thickness=20,
+        len=0.9,
+        title=dict(text=title, side="bottom", font=dict(size=FS_CBAR)),
+        tickfont=dict(size=FS_TICK),
     )
 
 
 def _img_to_b64(arr: np.ndarray) -> str:
-    """Convert an RGB numpy array to a base64-encoded PNG data URI."""
+    """Convert an RGB numpy array to a grayscale base64-encoded PNG data URI."""
+    img = PILImage.fromarray(arr.astype(np.uint8)).convert("L").convert("RGB")
     buf = BytesIO()
-    PILImage.fromarray(arr.astype(np.uint8)).save(buf, format="PNG")
+    img.save(buf, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def make_mean_spectrum_option(
+    mean_da: xr.DataArray,
+    lmin: float,
+    lmax: float,
+    spectral_unit: str,
+) -> dict:
+    """ECharts option for mean spectrum with highlighted selection range."""
+    x = mean_da.coords[mean_da.dims[0]].values.tolist()
+    y = np.nan_to_num(mean_da.values).tolist()
+    return {
+        "animation": False,
+        "grid": {"top": 24, "bottom": 50, "left": 10, "right": 30},
+        "xAxis": {
+            "type": "value",
+            "name": "",
+            "nameLocation": "end",
+            "min": x[0] if x else None,
+            "max": x[-1] if x else None,
+            "nameTextStyle": {"fontSize": 12},
+            "axisLabel": {"fontSize": 11},
+        },
+        "yAxis": {
+            "type": "value",
+            "axisLabel": {"show": False},
+            "name": "",
+        },
+        "tooltip": {"trigger": "axis"},
+        "series": [{
+            "type": "line",
+            "data": [[xi, yi] for xi, yi in zip(x, y)],
+            "showSymbol": False,
+            "lineStyle": {"width": 1.5, "color": "#4b8bbe"},
+            "markArea": {
+                "silent": True,
+                "data": [[
+                    {"xAxis": lmin, "itemStyle": {"color": "rgba(255, 165, 0, 0.25)"}},
+                    {"xAxis": lmax},
+                ]],
+            },
+        }],
+    }
 
 
 def make_map_fig(
@@ -39,7 +90,6 @@ def make_map_fig(
     quantity: str = "integrated",
     colorscale: str = "Viridis",
     title: str = "",
-    flip_y: bool = False,
     spectral_unit: str = "nm",
 ) -> go.Figure:
     """Heatmap of spectral quantity overlaid on the white-light image.
@@ -60,8 +110,6 @@ def make_map_fig(
         ``"deviation"``  — mean |spectrum − mean_spectrum| in that range.
     colorscale:
         Plotly colorscale name.
-    flip_y:
-        Flip the Y axis if stage Y increases upward instead of downward.
     """
     spectral_dim = da.dims[-1]
     x_coords = da.coords["column"].values
@@ -74,10 +122,10 @@ def make_map_fig(
 
     if quantity == "deviation":
         mean_spec = da_range.mean(spatial_dims)
-        z = np.abs(da_range - mean_spec).sum(spectral_dim).values
+        z = np.abs(da_range - mean_spec).sum(spectral_dim, min_count=1).values
         cbar_label = f"deviation from mean ({lmin:.0f}–{lmax:.0f} {spectral_unit})"
     else:
-        z = da_range.sum(spectral_dim).values
+        z = da_range.sum(spectral_dim, min_count=1).values
         cbar_label = f"integrated intensity ({lmin:.0f}–{lmax:.0f} {spectral_unit})"
 
     fig = go.Figure()
@@ -122,11 +170,11 @@ def make_map_fig(
             title=dict(text="y (µm)", font=dict(size=FS_AXIS)),
             tickfont=dict(size=FS_TICK),
             showgrid=False,
-            autorange="normal" if flip_y else "reversed",
+            autorange="reversed",
         ),
         plot_bgcolor="white",
         paper_bgcolor="white",
-        margin=dict(t=80, l=70, r=40, b=80),
+        margin=dict(t=80, l=70, r=40, b=160),
         autosize=True,
     )
     return fig
