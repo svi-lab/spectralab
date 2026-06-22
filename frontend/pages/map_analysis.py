@@ -8,7 +8,9 @@ from typing import Any
 import streamlit as st
 
 from backend._shared.dataset import SpectralDataset
-from ..map_chart import make_map_fig
+from streamlit_echarts import st_echarts
+
+from ..map_chart import make_map_fig, make_mean_spectrum_option
 
 _UNIT_DISPLAY = {
     "RamanShift":   "cm⁻¹",
@@ -53,6 +55,7 @@ def render_map_page() -> None:
                     all_finals[name] = da_final
                 except Exception:
                     pass
+        st.session_state["sl_finals"] = all_finals
 
     map_candidates = {
         name: entry for name, entry in loaded.items()
@@ -77,25 +80,6 @@ def render_map_page() -> None:
             map_name = next(iter(map_candidates))
 
         ds: SpectralDataset = map_candidates[map_name]["dataset"]
-        spectral_label = ds.spectral_dim.replace("_", " ")
-
-        st.markdown('<p class="section-header">Spectral Range</p>', unsafe_allow_html=True)
-        mc1, mc2 = st.columns(2)
-        lmin = mc1.number_input(
-            f"λ min ({spectral_label})",
-            value=float(round(ds.spec_min + (ds.spec_max - ds.spec_min) * 0.2, 1)),
-            min_value=float(ds.spec_min), max_value=float(ds.spec_max),
-            step=1.0, key="map_lmin",
-        )
-        lmax = mc2.number_input(
-            f"λ max ({spectral_label})",
-            value=float(round(ds.spec_min + (ds.spec_max - ds.spec_min) * 0.8, 1)),
-            min_value=float(ds.spec_min), max_value=float(ds.spec_max),
-            step=1.0, key="map_lmax",
-        )
-
-        if lmin >= lmax:
-            st.warning("λ min must be less than λ max.")
 
         st.markdown('<p class="section-header">Display</p>', unsafe_allow_html=True)
         quantity = st.selectbox(
@@ -112,39 +96,62 @@ def render_map_page() -> None:
             ["Viridis", "Plasma", "Inferno", "Hot", "RdBu_r", "Turbo"],
             key="map_colorscale",
         )
-        flip_y = st.checkbox(
-            "Flip Y axis", key="map_flip_y",
-            help="Toggle if the image appears upside-down relative to the heatmap.",
-        )
+
+    da_map = all_finals.get(map_name)
+    if da_map is None:
+        with right:
+            st.warning("Processing result not available for this file. Visit the Preprocessing page first.")
+        return
+
+    spectral_dim = da_map.dims[-1]
+    spectral_unit_display = (
+        _UNIT_DISPLAY.get(ds.spectral_units) or ds.spectral_unit or "nm"
+    )
+    spec_coords = da_map.coords[spectral_dim].values
+    spec_min_val = float(spec_coords[0])
+    spec_max_val = float(spec_coords[-1])
+    step = max(round((spec_max_val - spec_min_val) / len(spec_coords), 2), 0.1)
+    _default_lmin = round(spec_min_val + (spec_max_val - spec_min_val) * 0.2, 1)
+    _default_lmax = round(spec_min_val + (spec_max_val - spec_min_val) * 0.8, 1)
 
     with right:
-        if lmin >= lmax:
-            return
-
-        da_map = all_finals.get(map_name)
-        if da_map is None:
-            st.warning("Processing result not available for this file. Visit the Preprocessing page first.")
-            return
-
-        spectral_unit_display = (
-            _UNIT_DISPLAY.get(ds.spectral_units) or ds.spectral_unit or "nm"
-        )
         with st.spinner("Building map…"):
-            fig_map = make_map_fig(
-                da=da_map,
-                image_arr=ds.image_arr,
-                image_meta=ds.image_meta,
-                lambda_min=lmin,
-                lambda_max=lmax,
-                quantity=quantity,
-                colorscale=colorscale,
-                title=map_name,
-                flip_y=flip_y,
-                spectral_unit=spectral_unit_display,
-            )
-        st.plotly_chart(fig_map, width="stretch")
+            lmin, lmax = st.session_state.get("map_spec_range", (_default_lmin, _default_lmax))
+            if lmin < lmax:
+                fig_map = make_map_fig(
+                    da=da_map,
+                    image_arr=ds.image_arr,
+                    image_meta=ds.image_meta,
+                    lambda_min=lmin,
+                    lambda_max=lmax,
+                    quantity=quantity,
+                    colorscale=colorscale,
+                    title=map_name,
+                    spectral_unit=spectral_unit_display,
+                )
+                st.plotly_chart(fig_map, width="stretch", height=600)
 
         if ds.image_arr is None:
             st.caption("ℹ No white-light image (WHTL block) found in this file — heatmap only.")
         elif ds.image_meta is None:
             st.caption("ℹ Image found but EXIF geo-registration data missing — heatmap only.")
+
+        _, _slider_col, _ = st.columns([0.5, 11, 0.24])  # adjust outer cols to tune width
+        with _slider_col:
+            lmin, lmax = st.slider(
+                "Spectral range",
+                min_value=spec_min_val,
+                max_value=spec_max_val,
+                value=(_default_lmin, _default_lmax),
+                step=step,
+                key="map_spec_range",
+                label_visibility="collapsed",
+            )
+        if lmin >= lmax:
+            st.warning("Left handle must be less than right handle.")
+
+        mean_da = da_map.mean([d for d in da_map.dims if d != spectral_dim], skipna=True)
+        st_echarts(
+            make_mean_spectrum_option(mean_da, lmin, lmax, spectral_unit_display),
+            height="200px",
+        )
