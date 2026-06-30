@@ -336,3 +336,43 @@ def render_denoising_params() -> dict[str, Any]:
         per_spectrum=per_spectrum,
         smoother=smoother_params,
     )
+
+
+def render_nmf_params() -> dict[str, Any]:
+    """Render advanced NMF parameter widgets. Returns nmf_params dict.
+
+    Deliberately excludes ``n_components`` — that is chosen on the
+    Decomposition page itself from the diagnostic curve, not a plain
+    number_input here, since the whole point of the diagnostic curve is to
+    inform that choice interactively rather than default to a hidden value.
+    """
+    with st.expander("Advanced NMF parameters", expanded=False):
+        init = st.selectbox(
+            "Initialization",
+            ["nndsvda", "nndsvd", "random"],
+            key="nmf_init",
+            help=(
+                "**nndsvda** (default): deterministic SVD-based init that "
+                "fills exact zeros with the data average. Fast and "
+                "reproducible — recommended.\n\n"
+                "**nndsvd**: deterministic SVD-based init with exact zeros; "
+                "can stall on sparse components.\n\n"
+                "**random**: random non-negative init seeded by "
+                "random_state. Useful for checking whether a result is "
+                "stable across different starting points."
+            ),
+        )
+        col1, col2 = st.columns(2)
+        max_iter = col1.number_input(
+            "max_iter", value=500, min_value=50, step=50,
+            key="nmf_max_iter",
+        )
+        random_state = col2.number_input(
+            "random_state (seed)", value=0, min_value=0, step=1,
+            key="nmf_random_state",
+        )
+    return dict(
+        init=init,
+        max_iter=int(max_iter),
+        random_state=int(random_state),
+    )

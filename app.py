@@ -11,6 +11,7 @@ import streamlit as st
 from frontend.sidebar import render_sidebar
 from frontend.pages.preprocessing import render_preprocessing_page
 from frontend.pages.map_analysis import render_map_page
+from frontend.pages.decomposition import render_decomposition_page
 from frontend.pages.deconvolution import render_deconvolution_page
 
 st.set_page_config(
@@ -62,6 +63,8 @@ pg = st.navigation([
             icon=":material/tune:", default=True),
     st.Page(render_map_page,           title="Map Analysis",
             icon=":material/map:"),
+    st.Page(render_decomposition_page, title="Decomposition",
+            icon=":material/category:"),
     st.Page(render_deconvolution_page, title="Deconvolution",
             icon=":material/timeline:"),
 ])
