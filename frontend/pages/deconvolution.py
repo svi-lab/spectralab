@@ -17,20 +17,9 @@ from backend.peak_fitter import BandSpec, FitResult, PeakFitter, fit_map_gaussia
 from ..charts import make_deconv_fit_echarts
 from ..controls import render_axis_controls
 from ..map_chart import make_scalar_map_fig
+from ..pipeline_cache import default_pipeline_params, get_finals
 
 _BAND_COLUMNS = ["label", "center_guess", "center_min", "center_max", "sigma_guess", "sigma_min", "sigma_max"]
-
-
-def _default_pipeline_params() -> dict[str, Any]:
-    """All-disabled pipeline params for cold page loads (no preprocessing)."""
-    return {
-        "norm1_enabled": False, "norm1": {},
-        "cd_enabled":    False, "cd":    {},
-        "crr_enabled":   False, "crr":   {},
-        "norm2_enabled": False, "norm2": {},
-        "denoise_enabled": False, "denoise": {},
-        "norm3_enabled": False, "norm3": {},
-    }
 
 
 def _default_bands_table(x: np.ndarray) -> list[dict]:
@@ -134,19 +123,9 @@ def render_deconvolution_page() -> None:
         st.info("Upload files in the sidebar to get started.")
         st.stop()
 
-    all_finals: dict[str, Any] | None = st.session_state.get("sl_finals")
-    if all_finals is None:
-        from backend.pipeline import preprocess
-        params = st.session_state.get("sl_pipeline_params", _default_pipeline_params())
-        all_finals = {}
-        with st.spinner("Preparing data…"):
-            for name, entry in loaded.items():
-                try:
-                    _, da_final = preprocess(entry["dataset"], params)
-                    all_finals[name] = da_final
-                except Exception:
-                    pass
-        st.session_state["sl_finals"] = all_finals
+    pipeline_params = st.session_state.get("sl_pipeline_params") or default_pipeline_params()
+    with st.spinner("Preparing data…"):
+        _, all_finals, _errors = get_finals(loaded, pipeline_params)
 
     left, right = st.columns([1, 2], gap="medium")
 

@@ -5,6 +5,7 @@ __pycache__/
 data/
 .DS_Store
 CLAUDE.md
+/agent-skills
 
 # C extensions
 *.so

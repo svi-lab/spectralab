@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import math
 from typing import Any
 
@@ -13,7 +12,7 @@ from backend.pipeline import load_wdf
 from backend._shared.dataset import SpectralDataset
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=16)
 def _load_wdf_cached(raw_bytes: bytes) -> SpectralDataset:
     return load_wdf(raw_bytes)
 
@@ -50,9 +49,7 @@ def render_sidebar() -> None:
     with st.container(key="remove_files"):
         if st.button("Remove all files", width="stretch"):
             st.session_state["_sl_uploader_key"] += 1
-            st.session_state.pop("_sl_file_hashes", None)
             st.session_state.pop("sl_pipeline_params", None)
-            st.session_state.pop("sl_finals", None)
             for _key in (
                 "cd_enabled", "crr_enabled", "denoise_enabled", "norm_selection", "prog_title",
             ):
@@ -60,20 +57,20 @@ def render_sidebar() -> None:
             st.rerun()
 
     # ── Load files ────────────────────────────────────────────────────────────
+    # uf.file_id is assigned once by Streamlit when the upload is registered and
+    # stays stable across reruns of the same upload — use it as the cache/identity
+    # key instead of re-hashing raw_bytes (an MD5 pass) on every single rerun.
     loaded: dict[str, Any] = {}
     load_errors: list[str] = []
-    _file_hashes: dict[str, str] = st.session_state.setdefault("_sl_file_hashes", {})
 
     with st.spinner(f"Reading {len(uploaded_files)} file(s)…"):
         for uf in uploaded_files:
             raw_bytes = uf.read()
-            file_hash = hashlib.md5(raw_bytes).hexdigest()
-            _file_hashes[uf.name] = file_hash
             try:
                 dataset = _load_wdf_cached(raw_bytes)
                 loaded[uf.name] = {
                     "bytes": raw_bytes,
-                    "hash": file_hash,
+                    "hash": uf.file_id,
                     "dataset": dataset,
                 }
             except Exception as exc:

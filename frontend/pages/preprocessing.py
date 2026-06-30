@@ -9,9 +9,8 @@ import numpy as np
 import streamlit as st
 from streamlit_echarts import st_echarts
 
-from backend.pipeline import preprocess
 from backend._shared.dataset import SpectralDataset
-from backend._shared.scan_geometry import get_scan_geometry
+from backend._shared.scan_geometry import ScanGeometry, get_scan_geometry
 from backend._shared.scan_overlay import draw_scan_overlay
 from ..charts import convert_x, make_comparison_echarts, make_final_echarts, make_progress_echarts
 from ..controls import (
@@ -23,11 +22,21 @@ from ..controls import (
     render_crr_params,
     render_denoising_params,
 )
+from ..pipeline_cache import get_finals
 
 
-@st.cache_data
-def _preprocess_cached(file_hash: str, _dataset: SpectralDataset, pipeline_params):
-    return preprocess(_dataset, pipeline_params)
+@st.cache_data(show_spinner=False, max_entries=16)
+def _draw_overlay_cached(
+    file_hash: str,
+    pipeline_params: dict,
+    _image_arr: np.ndarray,
+    image_meta: dict,
+    _geo: ScanGeometry,
+    _removed_mask: np.ndarray | None,
+) -> np.ndarray:
+    """Scan-footprint overlay drawing — a per-point PIL loop that's wasted
+    work to repeat on reruns triggered by unrelated chart controls."""
+    return draw_scan_overlay(_image_arr, image_meta, _geo, removed_mask=_removed_mask)
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +151,7 @@ def _restore_widget_state() -> None:
 def _show_images(
     names: list[str],
     loaded: dict[str, Any],
+    pipeline_params: dict[str, Any],
     all_finals: dict[str, Any] | None = None,
 ) -> None:
     imgs = [
@@ -164,8 +174,10 @@ def _show_images(
                 geo = get_scan_geometry(ds)
                 if geo is not None and ds.image_meta is not None:
                     removed_mask = _get_removed_mask(geo, ds, all_finals, name)
-                    arr = draw_scan_overlay(arr, ds.image_meta, geo,
-                                           removed_mask=removed_mask)
+                    arr = _draw_overlay_cached(
+                        loaded[name]["hash"], pipeline_params,
+                        arr, ds.image_meta, geo, removed_mask,
+                    )
                 col.image(arr, width="stretch")
 
 
@@ -322,29 +334,39 @@ def _run_preprocessing(
     loaded: dict[str, Any],
     pipeline_params: dict[str, Any],
 ) -> tuple[dict, dict, list[str]]:
-    all_stages: dict[str, dict] = {}
-    all_finals: dict[str, Any] = {}
-    errors: list[str] = []
-
     with st.spinner(f"Processing {len(loaded)} file(s)…"):
-        for name, entry in loaded.items():
-            try:
-                stages, da_final = _preprocess_cached(
-                    entry["hash"], entry["dataset"], pipeline_params
-                )
-                all_stages[name] = stages
-                all_finals[name] = da_final
-            except Exception as exc:
-                errors.append(f"{name}: {exc}")
-
-    return all_stages, all_finals, errors
+        return get_finals(loaded, pipeline_params)
 
 
+@st.cache_data(show_spinner=False, max_entries=16)
+def _make_final_echarts_cached(
+    file_hash: str,
+    pipeline_params: dict,
+    _da,
+    title: str,
+    color_by: str,
+    n_bins: int | None,
+    step: int,
+    x_unit: str,
+    laser_nm: float | None,
+    src_unit: str,
+    native_type: str,
+) -> dict:
+    """The density/density_lines modes rebin the whole spectra array — worth
+    skipping on reruns where only an unrelated control on the page changed."""
+    return make_final_echarts(
+        _da, title=title, color_by=color_by, n_bins=n_bins, step=step,
+        x_unit=x_unit, laser_nm=laser_nm, src_unit=src_unit, native_type=native_type,
+    )
+
+
+@st.fragment
 def _render_progress_tab(
     tab,
     all_stages: dict,
     all_finals: dict,
     loaded: dict[str, Any],
+    pipeline_params: dict[str, Any],
     multi: bool,
     ref_ds: SpectralDataset,
 ) -> None:
@@ -417,13 +439,15 @@ def _render_progress_tab(
             names_img = [name]
 
         st_echarts(opts, height="72vh", key="progress_chart")
-        _show_images(names_img, loaded, all_finals)
+        _show_images(names_img, loaded, pipeline_params, all_finals)
 
 
+@st.fragment
 def _render_final_tab(
     tab,
     all_finals: dict,
     loaded: dict[str, Any],
+    pipeline_params: dict[str, Any],
     multi: bool,
     ref_ds: SpectralDataset,
 ) -> None:
@@ -450,7 +474,7 @@ def _render_final_tab(
                 ),
                 height="72vh", key="final_comparison",
             )
-            _show_images(list(loaded.keys()), loaded, all_finals)
+            _show_images(list(loaded.keys()), loaded, pipeline_params, all_finals)
 
         else:
             if multi:
@@ -499,15 +523,14 @@ def _render_final_tab(
                 native_type=sel_ds.spectral_units,
             )
             st_echarts(
-                make_final_echarts(
-                    da_sel, title=selected,
-                    color_by=color_by, n_bins=n_bins_val, step=int(step),
-                    x_unit=x_unit, laser_nm=laser,
-                    src_unit=sel_ds.spectral_unit, native_type=sel_ds.spectral_units,
+                _make_final_echarts_cached(
+                    loaded[selected]["hash"], pipeline_params, da_sel, selected,
+                    color_by, n_bins_val, int(step),
+                    x_unit, laser, sel_ds.spectral_unit, sel_ds.spectral_units,
                 ),
                 height="72vh", key="final_single",
             )
-            _show_images([selected], loaded, all_finals)
+            _show_images([selected], loaded, pipeline_params, all_finals)
 
 
 # ---------------------------------------------------------------------------
@@ -540,9 +563,8 @@ def render_preprocessing_page() -> None:
         if not all_finals:
             st.stop()
 
-        st.session_state["sl_finals"] = all_finals
         multi = len(all_finals) > 1
 
         tab_prog, tab_final = st.tabs(["Preprocessing", "Final"])
-        _render_progress_tab(tab_prog, all_stages, all_finals, loaded, multi, ref_ds)
-        _render_final_tab(tab_final, all_finals, loaded, multi, ref_ds)
+        _render_progress_tab(tab_prog, all_stages, all_finals, loaded, pipeline_params, multi, ref_ds)
+        _render_final_tab(tab_final, all_finals, loaded, pipeline_params, multi, ref_ds)

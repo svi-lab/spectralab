@@ -7,6 +7,7 @@ from io import BytesIO
 
 import numpy as np
 import plotly.graph_objects as go
+import streamlit as st
 import xarray as xr
 from PIL import Image as PILImage
 
@@ -30,8 +31,14 @@ def _colorbar(title: str) -> dict:
     )
 
 
+@st.cache_data(show_spinner=False, max_entries=8)
 def _img_to_b64(arr: np.ndarray) -> str:
-    """Convert an RGB numpy array to a grayscale base64-encoded PNG data URI."""
+    """Convert an RGB numpy array to a grayscale base64-encoded PNG data URI.
+
+    Cached because the same white-light image is re-encoded on every rerun
+    that touches the map figure (spectral-range slider, colorscale, etc.)
+    even though the image itself essentially never changes.
+    """
     img = PILImage.fromarray(arr.astype(np.uint8)).convert("L").convert("RGB")
     buf = BytesIO()
     img.save(buf, format="PNG")

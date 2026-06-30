@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import streamlit as st
 from streamlit_echarts import st_echarts
 
@@ -14,18 +12,7 @@ from backend.spectra_decomposer import Decomposer, compute_nmf_diagnostic_curve
 from ..charts import make_components_echarts, make_nmf_diagnostic_echarts
 from ..controls import render_axis_controls, render_nmf_params
 from ..map_chart import make_scalar_map_fig
-
-
-def _default_pipeline_params() -> dict[str, Any]:
-    """All-disabled pipeline params for cold page loads (no preprocessing)."""
-    return {
-        "norm1_enabled": False, "norm1": {},
-        "cd_enabled":    False, "cd":    {},
-        "crr_enabled":   False, "crr":   {},
-        "norm2_enabled": False, "norm2": {},
-        "denoise_enabled": False, "denoise": {},
-        "norm3_enabled": False, "norm3": {},
-    }
+from ..pipeline_cache import default_pipeline_params, get_finals
 
 
 def render_decomposition_page() -> None:
@@ -35,23 +22,9 @@ def render_decomposition_page() -> None:
         st.info("Upload files in the sidebar to get started.")
         st.stop()
 
-    all_finals: dict[str, Any] | None = st.session_state.get("sl_finals")
-
-    # If finals aren't cached yet (user navigated here before Preprocessing page
-    # ran), re-run with stored params or all-disabled defaults — same fallback
-    # as the Map Analysis page.
-    if all_finals is None:
-        from backend.pipeline import preprocess
-        params = st.session_state.get("sl_pipeline_params", _default_pipeline_params())
-        all_finals = {}
-        with st.spinner("Preparing data…"):
-            for name, entry in loaded.items():
-                try:
-                    _, da_final = preprocess(entry["dataset"], params)
-                    all_finals[name] = da_final
-                except Exception:
-                    pass
-        st.session_state["sl_finals"] = all_finals
+    pipeline_params = st.session_state.get("sl_pipeline_params") or default_pipeline_params()
+    with st.spinner("Preparing data…"):
+        _, all_finals, _errors = get_finals(loaded, pipeline_params)
 
     map_candidates = {
         name: entry for name, entry in loaded.items()
