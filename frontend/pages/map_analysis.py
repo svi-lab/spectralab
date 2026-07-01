@@ -129,21 +129,22 @@ def render_map_page() -> None:
 
         ds: SpectralDataset = map_candidates[map_name]["dataset"]
 
-        st.markdown('<p class="section-header">Display</p>', unsafe_allow_html=True)
-        quantity = st.selectbox(
-            "Quantity",
-            ["integrated", "deviation"],
-            format_func=lambda q: {
-                "integrated": "Integrated intensity",
-                "deviation":  "Deviation from mean",
-            }[q],
-            key="map_quantity",
-        )
-        colorscale = st.selectbox(
-            "Colorscale",
-            ["Viridis", "Plasma", "Inferno", "Hot", "RdBu_r", "Turbo"],
-            key="map_colorscale",
-        )
+        with st.container(border=True):
+            st.markdown('<p class="section-header">Display</p>', unsafe_allow_html=True)
+            quantity = st.selectbox(
+                "Quantity",
+                ["integrated", "deviation"],
+                format_func=lambda q: {
+                    "integrated": "Integrated intensity",
+                    "deviation":  "Deviation from mean",
+                }[q],
+                key="map_quantity",
+            )
+            colorscale = st.selectbox(
+                "Colorscale",
+                ["Viridis", "Plasma", "Inferno", "Hot", "RdBu_r", "Turbo"],
+                key="map_colorscale",
+            )
 
     da_map = all_finals.get(map_name)
     if da_map is None:

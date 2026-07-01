@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import streamlit as st
@@ -100,43 +99,6 @@ def render_sidebar() -> None:
         processing_ok = False
     else:
         processing_ok = next(iter(loaded.values()))["dataset"].preprocessing_available
-
-    # ── File info ─────────────────────────────────────────────────────────────
-    if len(loaded) == 1:
-        name, entry = next(iter(loaded.items()))
-        ds = entry["dataset"]
-        lp = ds.laser_power
-        et = ds.exposure_time
-        st.markdown(
-            f'<div class="info-box">'
-            f"<b>File:</b> {name}<br>"
-            f"<b>Dims:</b> {ds.dims}<br>"
-            f"<b>Shape:</b> {ds.shape}<br>"
-            f"<b>Ndim:</b> {ds.ndim}<br>"
-            f"<b>Kind:</b> {ds.measurement_kind} ({ds.spectral_units or '—'})<br>"
-            f"<b>Laser power:</b> {'—' if math.isnan(lp) else f'{lp:.4g}'}<br>"
-            f"<b>Exposure time:</b> {'—' if math.isnan(et) else f'{et:.4g}'}"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown(f"**{len(loaded)} files loaded.** File details:")
-        for name, entry in loaded.items():
-            ds = entry["dataset"]
-            lp = ds.laser_power
-            et = ds.exposure_time
-            with st.expander(name, expanded=False):
-                st.markdown(
-                    f'<div class="info-box">'
-                    f"<b>Dims:</b> {ds.dims}<br>"
-                    f"<b>Shape:</b> {ds.shape}<br>"
-                    f"<b>Ndim:</b> {ds.ndim}<br>"
-                    f"<b>Kind:</b> {ds.measurement_kind} ({ds.spectral_units or '—'})<br>"
-                    f"<b>Laser power:</b> {'—' if math.isnan(lp) else f'{lp:.4g}'}<br>"
-                    f"<b>Exposure time:</b> {'—' if math.isnan(et) else f'{et:.4g}'}"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
 
     # ── Publish to session state ──────────────────────────────────────────────
     st.session_state["sl_loaded"] = loaded

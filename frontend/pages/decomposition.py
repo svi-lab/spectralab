@@ -62,31 +62,34 @@ def render_decomposition_page() -> None:
         return
 
     with left:
-        st.markdown('<p class="section-header">Display</p>', unsafe_allow_html=True)
-        x_unit, laser_nm = render_axis_controls(
-            "nmf", ds.laser_nm, native_type=ds.spectral_units,
-        )
+        with st.container(border=True):
+            st.markdown('<p class="section-header">Display</p>', unsafe_allow_html=True)
+            x_unit, laser_nm = render_axis_controls(
+                "nmf", ds.laser_nm, native_type=ds.spectral_units,
+            )
 
-        st.markdown('<p class="section-header">Diagnostic Curve</p>', unsafe_allow_html=True)
-        k_max = st.number_input(
-            "k_max to sweep", value=8, min_value=2, max_value=20, step=1,
-            key="nmf_kmax",
-            help=(
-                "Sweeps n_components = 1..k_max and reports reconstruction "
-                "error / variance-explained at each step, so you can pick k "
-                "from where the curve elbows instead of an automatic choice."
-            ),
-        )
-        run_diag = st.button("Compute diagnostic curve", key="nmf_run_diagnostic")
+        with st.container(border=True):
+            st.markdown('<p class="section-header">Diagnostic Curve</p>', unsafe_allow_html=True)
+            k_max = st.number_input(
+                "k_max to sweep", value=8, min_value=2, max_value=20, step=1,
+                key="nmf_kmax",
+                help=(
+                    "Sweeps n_components = 1..k_max and reports reconstruction "
+                    "error / variance-explained at each step, so you can pick k "
+                    "from where the curve elbows instead of an automatic choice."
+                ),
+            )
+            run_diag = st.button("Compute diagnostic curve", key="nmf_run_diagnostic")
 
-        st.markdown('<p class="section-header">Decomposition</p>', unsafe_allow_html=True)
-        n_components = st.number_input(
-            "n_components (k)", value=3, min_value=1, step=1,
-            key="nmf_n_components",
-            help="Pick this using the diagnostic curve above — there is no automatic/hidden k selection.",
-        )
-        nmf_params = render_nmf_params()
-        run_decompose = st.button("Run NMF decomposition", key="nmf_run_decompose", type="primary")
+        with st.container(border=True):
+            st.markdown('<p class="section-header">Decomposition</p>', unsafe_allow_html=True)
+            n_components = st.number_input(
+                "n_components (k)", value=3, min_value=1, step=1,
+                key="nmf_n_components",
+                help="Pick this using the diagnostic curve above — there is no automatic/hidden k selection.",
+            )
+            nmf_params = render_nmf_params()
+            run_decompose = st.button("Run NMF decomposition", key="nmf_run_decompose", type="primary")
 
     with right:
         if run_diag:
@@ -101,23 +104,6 @@ def render_decomposition_page() -> None:
                     st.session_state["sl_nmf_diagnostic"] = diag
                 except ValueError as exc:
                     st.error(f"Could not compute diagnostic curve: {exc}")
-
-        diag = st.session_state.get("sl_nmf_diagnostic")
-        if diag:
-            st_echarts(make_nmf_diagnostic_echarts(diag), height="320px")
-            n_not_converged = sum(1 for c in diag["converged"] if not c)
-            if n_not_converged:
-                st.caption(
-                    f"⚠ {n_not_converged} of {len(diag['k_values'])} component counts "
-                    "did not fully converge within max_iter (hollow markers above) — "
-                    "consider raising max_iter in Advanced NMF parameters."
-                )
-            if diag["subsampled"]:
-                st.caption(
-                    f"Diagnostic computed on a random subsample of {diag['n_pixels_used']} "
-                    f"of {diag['n_pixels_total']} pixels for speed. The final decomposition "
-                    "below always uses every pixel."
-                )
 
         if run_decompose:
             with st.spinner("Running NMF…"):
@@ -151,15 +137,17 @@ def render_decomposition_page() -> None:
             )
 
             with tab_components:
+                comp_title = st.text_input("Chart title", value="Component Spectra", key="nmf_comp_title")
                 st_echarts(
                     make_components_echarts(
                         nmf_result["components"],
                         nmf_result["spectral_coords"],
                         nmf_result["spectral_dim"],
+                        title=comp_title,
                         x_unit=x_unit, laser_nm=laser_nm,
                         src_unit=ds.spectral_unit, native_type=ds.spectral_units,
                     ),
-                    height="450px",
+                    height="72vh",
                 )
 
             with tab_maps:
@@ -204,3 +192,22 @@ def render_decomposition_page() -> None:
                     )
         elif nmf_result is not None:
             st.caption(f"Last NMF result was for **{nmf_result['file_name']}** — run again for **{map_name}**.")
+
+        diag = st.session_state.get("sl_nmf_diagnostic")
+        if diag:
+            st.divider()
+            diag_title = st.text_input("Chart title", value="NMF Diagnostic Curve", key="nmf_diag_title")
+            st_echarts(make_nmf_diagnostic_echarts(diag, title=diag_title), height="72vh")
+            n_not_converged = sum(1 for c in diag["converged"] if not c)
+            if n_not_converged:
+                st.caption(
+                    f"⚠ {n_not_converged} of {len(diag['k_values'])} component counts "
+                    "did not fully converge within max_iter (hollow markers above) — "
+                    "consider raising max_iter in Advanced NMF parameters."
+                )
+            if diag["subsampled"]:
+                st.caption(
+                    f"Diagnostic computed on a random subsample of {diag['n_pixels_used']} "
+                    f"of {diag['n_pixels_total']} pixels for speed. The final decomposition "
+                    "always uses every pixel."
+                )

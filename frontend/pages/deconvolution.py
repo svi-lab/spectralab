@@ -153,87 +153,89 @@ def render_deconvolution_page() -> None:
     spatial_dims = [d for d in da_final.dims if d != spectral_dim]
 
     with left:
-        st.markdown('<p class="section-header">Display</p>', unsafe_allow_html=True)
-        x_unit, laser_nm = render_axis_controls(
-            "deconv", ds.laser_nm, native_type=ds.spectral_units,
-        )
-
-        st.markdown('<p class="section-header">Target Spectrum</p>', unsafe_allow_html=True)
-
-        target_options = ["Mean spectrum"]
-        if da_final.ndim == 3:
-            target_options.append("Single pixel")
-        nmf_result = st.session_state.get("sl_nmf_result")
-        nmf_available = bool(nmf_result and nmf_result["file_name"] == file_name)
-        if nmf_available:
-            target_options.append("NMF component")
-
-        target_mode = st.radio("Fit target", target_options, key="deconv_target_mode")
-
-        target_x: np.ndarray
-        target_y: np.ndarray
-
-        if target_mode == "Single pixel":
-            n_row = da_final.sizes[spatial_dims[0]]
-            n_col = da_final.sizes[spatial_dims[1]]
-            c1, c2 = st.columns(2)
-            row_idx = c1.number_input("Row index", 0, n_row - 1, 0, key="deconv_row_idx")
-            col_idx = c2.number_input("Column index", 0, n_col - 1, 0, key="deconv_col_idx")
-            target_da = da_final.isel({
-                spatial_dims[0]: int(row_idx), spatial_dims[1]: int(col_idx),
-            })
-            target_x = target_da.coords[spectral_dim].values
-            target_y = target_da.values
-            if bool(np.all(np.isnan(target_y))):
-                st.warning("This pixel is NaN (dead/oversaturated). Pick another.")
-        elif target_mode == "NMF component":
-            n_comp = nmf_result["components"].shape[0]
-            comp_idx = st.selectbox(
-                "Component", range(n_comp),
-                format_func=lambda i: f"Component {i + 1}",
-                key="deconv_nmf_comp_select",
+        with st.container(border=True):
+            st.markdown('<p class="section-header">Display</p>', unsafe_allow_html=True)
+            x_unit, laser_nm = render_axis_controls(
+                "deconv", ds.laser_nm, native_type=ds.spectral_units,
             )
-            target_x = nmf_result["spectral_coords"]
-            target_y = nmf_result["components"][comp_idx]
-        else:  # Mean spectrum
-            target_da = da_final.mean(spatial_dims, skipna=True) if spatial_dims else da_final
-            target_x = target_da.coords[spectral_dim].values
-            target_y = target_da.values
+
+        with st.container(border=True):
+            st.markdown('<p class="section-header">Target Spectrum</p>', unsafe_allow_html=True)
+
+            target_options = ["Mean spectrum"]
+            if da_final.ndim == 3:
+                target_options.append("Single pixel")
+            nmf_result = st.session_state.get("sl_nmf_result")
+            nmf_available = bool(nmf_result and nmf_result["file_name"] == file_name)
+            if nmf_available:
+                target_options.append("NMF component")
+
+            target_mode = st.radio("Fit target", target_options, key="deconv_target_mode")
+
+            target_x: np.ndarray
+            target_y: np.ndarray
+
+            if target_mode == "Single pixel":
+                n_row = da_final.sizes[spatial_dims[0]]
+                n_col = da_final.sizes[spatial_dims[1]]
+                c1, c2 = st.columns(2)
+                row_idx = c1.number_input("Row index", 0, n_row - 1, 0, key="deconv_row_idx")
+                col_idx = c2.number_input("Column index", 0, n_col - 1, 0, key="deconv_col_idx")
+                target_da = da_final.isel({
+                    spatial_dims[0]: int(row_idx), spatial_dims[1]: int(col_idx),
+                })
+                target_x = target_da.coords[spectral_dim].values
+                target_y = target_da.values
+                if bool(np.all(np.isnan(target_y))):
+                    st.warning("This pixel is NaN (dead/oversaturated). Pick another.")
+            elif target_mode == "NMF component":
+                n_comp = nmf_result["components"].shape[0]
+                comp_idx = st.selectbox(
+                    "Component", range(n_comp),
+                    format_func=lambda i: f"Component {i + 1}",
+                    key="deconv_nmf_comp_select",
+                )
+                target_x = nmf_result["spectral_coords"]
+                target_y = nmf_result["components"][comp_idx]
+            else:  # Mean spectrum
+                target_da = da_final.mean(spatial_dims, skipna=True) if spatial_dims else da_final
+                target_x = target_da.coords[spectral_dim].values
+                target_y = target_da.values
 
         unit_label = "eV" if ds.spectral_units == "ElectronVolt" else "nm"
-        st.markdown('<p class="section-header">Band Parameters</p>', unsafe_allow_html=True)
-        st.caption(f"Positions are in native units ({unit_label}), matching this file's stored axis.")
-        bands_table = st.data_editor(
-            st.session_state.get("deconv_bands_table", _default_bands_table(target_x)),
-            num_rows="dynamic",
-            column_config={
-                "label":        st.column_config.TextColumn("Label"),
-                "center_guess": st.column_config.NumberColumn(f"Center guess ({unit_label})", required=True),
-                "center_min":   st.column_config.NumberColumn(f"Center min ({unit_label})"),
-                "center_max":   st.column_config.NumberColumn(f"Center max ({unit_label})"),
-                "sigma_guess":  st.column_config.NumberColumn("Sigma guess (auto if blank)"),
-                "sigma_min":    st.column_config.NumberColumn("Sigma min"),
-                "sigma_max":    st.column_config.NumberColumn("Sigma max"),
-            },
-            column_order=_BAND_COLUMNS,
-            key="deconv_bands_editor",
-        )
-        st.session_state["deconv_bands_table"] = bands_table
-
-        fit_clicked = st.button("Fit", key="deconv_fit_button", type="primary")
-
-        st.divider()
-        st.markdown('<p class="section-header">Full-Map Batch Fit</p>', unsafe_allow_html=True)
-        if da_final.ndim == 3:
-            st.caption(
-                "Fits every pixel independently, warm-starting each pixel from its "
-                "neighbor's converged parameters. May take from seconds to minutes "
-                "depending on map size and band count."
+        with st.container(border=True):
+            st.markdown('<p class="section-header">Band Parameters</p>', unsafe_allow_html=True)
+            st.caption(f"Positions are in native units ({unit_label}), matching this file's stored axis.")
+            bands_table = st.data_editor(
+                st.session_state.get("deconv_bands_table", _default_bands_table(target_x)),
+                num_rows="dynamic",
+                column_config={
+                    "label":        st.column_config.TextColumn("Label"),
+                    "center_guess": st.column_config.NumberColumn(f"Center guess ({unit_label})", required=True),
+                    "center_min":   st.column_config.NumberColumn(f"Center min ({unit_label})"),
+                    "center_max":   st.column_config.NumberColumn(f"Center max ({unit_label})"),
+                    "sigma_guess":  st.column_config.NumberColumn("Sigma guess (auto if blank)"),
+                    "sigma_min":    st.column_config.NumberColumn("Sigma min"),
+                    "sigma_max":    st.column_config.NumberColumn("Sigma max"),
+                },
+                column_order=_BAND_COLUMNS,
+                key="deconv_bands_editor",
             )
-            batch_clicked = st.button("Fit entire map", key="deconv_batch_fit_button")
-        else:
-            batch_clicked = False
-            st.caption("Full-map batch fit requires a map-scan file.")
+            st.session_state["deconv_bands_table"] = bands_table
+            fit_clicked = st.button("Fit", key="deconv_fit_button", type="primary")
+
+        with st.container(border=True):
+            st.markdown('<p class="section-header">Full-Map Batch Fit</p>', unsafe_allow_html=True)
+            if da_final.ndim == 3:
+                st.caption(
+                    "Fits every pixel independently, warm-starting each pixel from its "
+                    "neighbor's converged parameters. May take from seconds to minutes "
+                    "depending on map size and band count."
+                )
+                batch_clicked = st.button("Fit entire map", key="deconv_batch_fit_button")
+            else:
+                batch_clicked = False
+                st.caption("Full-map batch fit requires a map-scan file.")
 
     with right:
         if fit_clicked:
@@ -251,13 +253,15 @@ def render_deconvolution_page() -> None:
 
         fit_result = st.session_state.get("sl_deconv_result")
         if fit_result is not None and st.session_state.get("sl_deconv_result_file") == file_name:
+            fit_title = st.text_input("Chart title", value="Peak Deconvolution", key="deconv_fit_title")
             st_echarts(
                 make_deconv_fit_echarts(
                     fit_result, spectral_dim,
+                    title=fit_title,
                     x_unit=x_unit, laser_nm=laser_nm,
                     src_unit=ds.spectral_unit, native_type=ds.spectral_units,
                 ),
-                height="450px",
+                height="72vh",
             )
             if not fit_result.success:
                 st.warning(f"Solver did not report success: {fit_result.message}")

@@ -5,13 +5,10 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
 import streamlit as st
 from streamlit_echarts import st_echarts
 
 from backend._shared.dataset import SpectralDataset
-from backend._shared.scan_geometry import ScanGeometry, get_scan_geometry
-from backend._shared.scan_overlay import draw_scan_overlay
 from ..charts import convert_x, make_comparison_echarts, make_final_echarts, make_progress_echarts
 from ..controls import (
     X_UNIT_FMT,
@@ -23,20 +20,6 @@ from ..controls import (
     render_denoising_params,
 )
 from ..pipeline_cache import get_finals
-
-
-@st.cache_data(show_spinner=False, max_entries=16)
-def _draw_overlay_cached(
-    file_hash: str,
-    pipeline_params: dict,
-    _image_arr: np.ndarray,
-    image_meta: dict,
-    _geo: ScanGeometry,
-    _removed_mask: np.ndarray | None,
-) -> np.ndarray:
-    """Scan-footprint overlay drawing — a per-point PIL loop that's wasted
-    work to repeat on reruns triggered by unrelated chart controls."""
-    return draw_scan_overlay(_image_arr, image_meta, _geo, removed_mask=_removed_mask)
 
 
 # ---------------------------------------------------------------------------
@@ -145,167 +128,110 @@ def _restore_widget_state() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Image helpers
-# ---------------------------------------------------------------------------
-
-def _show_images(
-    names: list[str],
-    loaded: dict[str, Any],
-    pipeline_params: dict[str, Any],
-    all_finals: dict[str, Any] | None = None,
-) -> None:
-    imgs = [
-        (name, loaded[name]["dataset"])
-        for name in names
-        if loaded.get(name) and loaded[name]["dataset"].image_arr is not None
-    ]
-    if not imgs:
-        return
-    st.divider()
-    _, img_col, _ = st.columns([1, 8, 1])
-    with img_col:
-        n_per_row = min(len(imgs), 4)
-        for i in range(0, len(imgs), n_per_row):
-            batch = imgs[i: i + n_per_row]
-            cols = st.columns(len(batch))
-            for col, (name, ds) in zip(cols, batch):
-                col.markdown(f"**{name}**")
-                arr = ds.image_arr
-                geo = get_scan_geometry(ds)
-                if geo is not None and ds.image_meta is not None:
-                    removed_mask = _get_removed_mask(geo, ds, all_finals, name)
-                    arr = _draw_overlay_cached(
-                        loaded[name]["hash"], pipeline_params,
-                        arr, ds.image_meta, geo, removed_mask,
-                    )
-                col.image(arr, width="stretch")
-
-
-def _get_removed_mask(geo, ds, all_finals, name) -> np.ndarray | None:
-    """Return bool mask (len = len(geo.xs)) marking CleanData-removed points."""
-    if geo.shape != "points" or all_finals is None:
-        return None
-    da_final = all_finals.get(name)
-    if da_final is None:
-        return None
-    if da_final.ndim == 3:
-        nan_mask = np.isnan(da_final.values).all(axis=-1)
-        if not nan_mask.any():
-            return None
-        return nan_mask.ravel()
-    if da_final.ndim == 2 and "point" in da_final.coords and "point" in ds.da.coords:
-        final_ids = set(da_final.coords["point"].values.tolist())
-        mask = np.array([
-            pid not in final_ids
-            for pid in ds.da.coords["point"].values.tolist()
-        ])
-        return mask if mask.any() else None
-    return None
-
-
-# ---------------------------------------------------------------------------
 # Left column: pipeline parameter widgets
 # ---------------------------------------------------------------------------
 
 def _render_preprocessing_params(processing_ok: bool) -> dict[str, Any]:
-    """Render all pipeline parameter widgets; return assembled pipeline_params."""
+    """Render pipeline parameter widgets; return assembled pipeline_params."""
 
-    # ── Normalization ─────────────────────────────────────────────────────────
-    st.markdown('<p class="section-header">Normalization</p>', unsafe_allow_html=True)
-    _NORM_SEGMENTS = ["Before", "After CRR", "After Denoising"]
-    norm_selection = st.segmented_control(
-        "Normalize at",
-        _NORM_SEGMENTS,
-        selection_mode="multi",
-        key="norm_selection",
-        label_visibility="collapsed",
-    )
-    norm_method: str | None = None
-    if norm_selection:
-        norm_method = st.selectbox(
-            "Method",
-            ["min_max", "area"],
-            key="norm_method",
-            format_func=lambda m: {"min_max": "Min-Max", "area": "Area"}[m],
-            help=(
-                "**Min-Max** — shifts and scales each spectrum so its minimum "
-                "becomes 0 and its maximum becomes 1.  Fast and shape-preserving; "
-                "good for comparing peak positions and relative heights when "
-                "absolute intensity differences do not matter.  Sensitive to "
-                "outlier spikes: a single very high or very low point will "
-                "compress the rest of the spectrum.\n\n"
-                "**Area** — divides each spectrum by its trapezoidal integral "
-                "(area under the curve), then shifts the floor to 0.  Preserves "
-                "the relative weight of broad vs. narrow features and is robust "
-                "to isolated spikes.  Use this when you want spectra that "
-                "represent the same total 'amount' of signal — e.g. before "
-                "comparing integrated intensities across samples."
-            ),
+    # ── Normalization (always visible, above the processing tabs) ─────────────
+    with st.container(border=True):
+        st.markdown('<p class="section-header">Normalization</p>', unsafe_allow_html=True)
+        _NORM_SEGMENTS = ["Before", "After CRR", "After Denoising"]
+        norm_selection = st.segmented_control(
+            "Normalize at",
+            _NORM_SEGMENTS,
+            selection_mode="multi",
+            key="norm_selection",
+            label_visibility="collapsed",
         )
-
-    st.divider()
+        norm_method: str | None = None
+        if norm_selection:
+            norm_method = st.selectbox(
+                "Method",
+                ["min_max", "area"],
+                key="norm_method",
+                format_func=lambda m: {"min_max": "Min-Max", "area": "Area"}[m],
+                help=(
+                    "**Min-Max** — shifts and scales each spectrum so its minimum "
+                    "becomes 0 and its maximum becomes 1.  Fast and shape-preserving; "
+                    "good for comparing peak positions and relative heights when "
+                    "absolute intensity differences do not matter.  Sensitive to "
+                    "outlier spikes: a single very high or very low point will "
+                    "compress the rest of the spectrum.\n\n"
+                    "**Area** — divides each spectrum by its trapezoidal integral "
+                    "(area under the curve), then shifts the floor to 0.  Preserves "
+                    "the relative weight of broad vs. narrow features and is robust "
+                    "to isolated spikes.  Use this when you want spectra that "
+                    "represent the same total 'amount' of signal — e.g. before "
+                    "comparing integrated intensities across samples."
+                ),
+            )
 
     # ── Clean Data ────────────────────────────────────────────────────────────
-    st.markdown('<p class="section-header">Clean Data</p>', unsafe_allow_html=True)
-    cd_enabled = st.toggle(
-        "Remove oversaturated spectra",
-        key="cd_enabled",
-        help=(
-            "Scans every spectrum for **ADC saturation artefacts** — consecutive "
-            "channels stuck at exactly 0, which occur when the detector clips to "
-            "zero instead of recording the true signal.\n\n"
-            "**What it does by data shape:**\n"
-            "- **Single spectrum (1D):** issues a warning; spectrum is left unchanged.\n"
-            "- **Line scan / series (2D):** drops saturated spectra from the stack "
-            "and records which indices were removed.\n"
-            "- **Map (3D):** NaN-fills the dead pixels in place, preserving the full "
-            "map shape so spatial coordinates stay intact. All downstream steps "
-            "(Cosmic Ray Removal, Spectra Cleaner) handle NaN pixels gracefully.\n\n"
-            "**When to enable:** if your data contains dead detector pixels or "
-            "spectra where the signal went off-scale and clipped to zero. "
-            "Run this *before* Cosmic Ray Removal so dead pixels don't interfere "
-            "with the spatial reference computation.\n\n"
-            "**n_zeros threshold:** how many consecutive zero-valued channels "
-            "define a saturated spectrum. The default of 10 avoids false positives "
-            "from small gaps while catching real saturation events."
-        ),
-    )
-    cd_params: dict[str, Any] = {}
-    if cd_enabled:
-        cd_params = render_clean_data_params()
-
-    st.divider()
+    with st.container(border=True):
+        st.markdown('<p class="section-header">Clean Data</p>', unsafe_allow_html=True)
+        cd_enabled = st.toggle(
+            "Remove oversaturated spectra",
+            key="cd_enabled",
+            help=(
+                "Scans every spectrum for **ADC saturation artefacts** — consecutive "
+                "channels stuck at exactly 0, which occur when the detector clips to "
+                "zero instead of recording the true signal.\n\n"
+                "**What it does by data shape:**\n"
+                "- **Single spectrum (1D):** issues a warning; spectrum is left unchanged.\n"
+                "- **Line scan / series (2D):** drops saturated spectra from the stack "
+                "and records which indices were removed.\n"
+                "- **Map (3D):** NaN-fills the dead pixels in place, preserving the full "
+                "map shape so spatial coordinates stay intact. All downstream steps "
+                "(Cosmic Ray Removal, Spectra Cleaner) handle NaN pixels gracefully.\n\n"
+                "**When to enable:** if your data contains dead detector pixels or "
+                "spectra where the signal went off-scale and clipped to zero. "
+                "Run this *before* Cosmic Ray Removal so dead pixels don't interfere "
+                "with the spatial reference computation.\n\n"
+                "**n_zeros threshold:** how many consecutive zero-valued channels "
+                "define a saturated spectrum. The default of 10 avoids false positives "
+                "from small gaps while catching real saturation events."
+            ),
+        )
+        cd_params: dict[str, Any] = {}
+        if cd_enabled:
+            cd_params = render_clean_data_params()
 
     # ── CosmicRayRemover ──────────────────────────────────────────────────────
-    st.markdown('<p class="section-header">Cosmic Ray Remover</p>', unsafe_allow_html=True)
-    if not processing_ok:
-        st.info(
-            "CosmicRayRemover and Denoiser require PL data "
-            "(Nanometer or ElectronVolt). Not available for this upload."
+    with st.container(border=True):
+        st.markdown('<p class="section-header">Cosmic Ray Remover</p>', unsafe_allow_html=True)
+        if not processing_ok:
+            st.info(
+                "Requires PL data (Nanometer or ElectronVolt). "
+                "Not available for this upload."
+            )
+        crr_enabled = st.toggle(
+            "Apply CosmicRayRemover", key="crr_enabled", disabled=not processing_ok
         )
-    crr_enabled = st.toggle(
-        "Apply CosmicRayRemover", key="crr_enabled", disabled=not processing_ok
-    )
-    crr_params: dict[str, Any] = {}
-    if crr_enabled:
-        crr_params = render_crr_params()
-
-    st.divider()
+        crr_params: dict[str, Any] = {}
+        if crr_enabled:
+            crr_params = render_crr_params()
 
     # ── Denoising ─────────────────────────────────────────────────────────────
-    st.markdown('<p class="section-header">Denoising</p>', unsafe_allow_html=True)
-    denoise_enabled = st.toggle(
-        "Apply Denoiser", key="denoise_enabled", disabled=not processing_ok
-    )
-    denoise_params: dict[str, Any] = {}
-    if denoise_enabled:
-        denoise_params = render_denoising_params()
-
-    st.divider()
+    with st.container(border=True):
+        st.markdown('<p class="section-header">Denoising</p>', unsafe_allow_html=True)
+        if not processing_ok:
+            st.info(
+                "Requires PL data (Nanometer or ElectronVolt). "
+                "Not available for this upload."
+            )
+        denoise_enabled = st.toggle(
+            "Apply Denoiser", key="denoise_enabled", disabled=not processing_ok
+        )
+        denoise_params: dict[str, Any] = {}
+        if denoise_enabled:
+            denoise_params = render_denoising_params()
 
     # ── Background Suppression (placeholder) ──────────────────────────────────
-    st.markdown('<p class="section-header">Background Suppression</p>', unsafe_allow_html=True)
-    st.info("Coming soon — background suppression controls will appear here.")
+    with st.container(border=True):
+        st.markdown('<p class="section-header">Background Suppression</p>', unsafe_allow_html=True)
+        st.info("Coming soon.")
 
     # ── Assemble and return pipeline_params ───────────────────────────────────
     _ns = norm_selection or []
@@ -360,9 +286,7 @@ def _make_final_echarts_cached(
     )
 
 
-@st.fragment
 def _render_progress_tab(
-    tab,
     all_stages: dict,
     all_finals: dict,
     loaded: dict[str, Any],
@@ -370,167 +294,182 @@ def _render_progress_tab(
     multi: bool,
     ref_ds: SpectralDataset,
 ) -> None:
-    with tab:
-        default_unit = UNIT_DEFAULT.get(ref_ds.spectral_units, "wavelength")
-        current_unit = st.session_state.get("prog_x_unit", default_unit)
+    default_unit = UNIT_DEFAULT.get(ref_ds.spectral_units, "wavelength")
+    current_unit = st.session_state.get("prog_x_unit", default_unit)
 
-        x_native = ref_ds.da.coords[ref_ds.spectral_dim].values
-        x_disp = convert_x(
-            x_native, ref_ds.spectral_dim, current_unit,
-            ref_ds.laser_nm, src_unit=ref_ds.spectral_unit,
-            native_type=ref_ds.spectral_units,
+    x_native = ref_ds.da.coords[ref_ds.spectral_dim].values
+    x_disp = convert_x(
+        x_native, ref_ds.spectral_dim, current_unit,
+        ref_ds.laser_nm, src_unit=ref_ds.spectral_unit,
+        native_type=ref_ds.spectral_units,
+    )
+    disp_min = float(x_disp.min())
+    disp_max = float(x_disp.max())
+
+    col_unit, col_from, col_to, col_laser, col_title = st.columns([2, 1, 1, 1, 2])
+
+    with col_unit:
+        x_unit = st.selectbox(
+            "Spectral units", X_UNIT_OPTIONS,
+            format_func=X_UNIT_FMT.get,
+            index=X_UNIT_OPTIONS.index(current_unit),
+            key="prog_x_unit",
         )
-        disp_min = float(x_disp.min())
-        disp_max = float(x_disp.max())
 
-        col_unit, col_from, col_to, col_laser, col_title = st.columns([2, 1, 1, 1, 2])
+    with col_from:
+        x_from = st.number_input(
+            "From", value=min(disp_min, disp_max),
+            key=f"prog_from_{x_unit}", format="%.2f",
+        )
 
-        with col_unit:
-            x_unit = st.selectbox(
-                "Spectral units", X_UNIT_OPTIONS,
-                format_func=X_UNIT_FMT.get,
-                index=X_UNIT_OPTIONS.index(current_unit),
-                key="prog_x_unit",
+    with col_to:
+        x_to = st.number_input(
+            "To", value=max(disp_min, disp_max),
+            key=f"prog_to_{x_unit}", format="%.2f",
+        )
+
+    laser = ref_ds.laser_nm
+    with col_laser:
+        if x_unit == "raman_shift" and laser is None:
+            laser = st.number_input(
+                "Laser (nm)", value=532.0, min_value=1.0, step=0.1,
+                key="prog_laser_nm",
+                help="Not found in file — enter the excitation wavelength.",
             )
 
-        with col_from:
-            x_from = st.number_input(
-                "From", value=min(disp_min, disp_max),
-                key=f"prog_from_{x_unit}", format="%.2f",
-            )
+    x_range = (min(x_from, x_to), max(x_from, x_to))
 
-        with col_to:
-            x_to = st.number_input(
-                "To", value=max(disp_min, disp_max),
-                key=f"prog_to_{x_unit}", format="%.2f",
-            )
+    default_title = next(iter(all_stages)) if not multi else "Final spectra — all files"
+    with col_title:
+        chart_title = st.text_input("Chart title", value=default_title, key="prog_title")
 
-        laser = ref_ds.laser_nm
-        with col_laser:
-            if x_unit == "raman_shift" and laser is None:
-                laser = st.number_input(
-                    "Laser (nm)", value=532.0, min_value=1.0, step=0.1,
-                    key="prog_laser_nm",
-                    help="Not found in file — enter the excitation wavelength.",
-                )
+    if multi:
+        opts = make_comparison_echarts(
+            all_finals, title=chart_title,
+            x_unit=x_unit, laser_nm=laser,
+            src_unit=ref_ds.spectral_unit, native_type=ref_ds.spectral_units,
+            x_range=x_range,
+        )
+    else:
+        name = next(iter(all_stages))
+        opts = make_progress_echarts(
+            all_stages[name], title=chart_title,
+            x_unit=x_unit, laser_nm=laser,
+            src_unit=ref_ds.spectral_unit, native_type=ref_ds.spectral_units,
+            x_range=x_range,
+        )
 
-        x_range = (min(x_from, x_to), max(x_from, x_to))
-
-        default_title = next(iter(all_stages)) if not multi else "Final spectra — all files"
-        with col_title:
-            chart_title = st.text_input("Chart title", value=default_title, key="prog_title")
-
-        if multi:
-            opts = make_comparison_echarts(
-                all_finals, title=chart_title,
-                x_unit=x_unit, laser_nm=laser,
-                src_unit=ref_ds.spectral_unit, native_type=ref_ds.spectral_units,
-                x_range=x_range,
-            )
-            names_img = list(loaded.keys())
-        else:
-            name = next(iter(all_stages))
-            opts = make_progress_echarts(
-                all_stages[name], title=chart_title,
-                x_unit=x_unit, laser_nm=laser,
-                src_unit=ref_ds.spectral_unit, native_type=ref_ds.spectral_units,
-                x_range=x_range,
-            )
-            names_img = [name]
-
-        st_echarts(opts, height="72vh", key="progress_chart")
-        _show_images(names_img, loaded, pipeline_params, all_finals)
+    st_echarts(opts, height="72vh", key="progress_chart")
 
 
-@st.fragment
 def _render_final_tab(
-    tab,
     all_finals: dict,
     loaded: dict[str, Any],
     pipeline_params: dict[str, Any],
     multi: bool,
     ref_ds: SpectralDataset,
 ) -> None:
-    with tab:
+    if multi:
+        view_mode = st.radio(
+            "View", ["Comparison (all files)", "Single file"],
+            horizontal=True, key="final_view_mode",
+        )
+    else:
+        view_mode = "Single file"
+
+    if view_mode == "Comparison (all files)":
+        chart_title = st.text_input("Chart title", value="Comparison — all files", key="fin_cmp_title")
+        x_unit, laser = render_axis_controls(
+            "fin_cmp",
+            ref_ds.laser_nm,
+            native_type=ref_ds.spectral_units,
+        )
+        st_echarts(
+            make_comparison_echarts(
+                all_finals, title=chart_title,
+                x_unit=x_unit, laser_nm=laser,
+                src_unit=ref_ds.spectral_unit, native_type=ref_ds.spectral_units,
+            ),
+            height="72vh", key="final_comparison",
+        )
+
+    else:
         if multi:
-            view_mode = st.radio(
-                "View", ["Comparison (all files)", "Single file"],
-                horizontal=True, key="final_view_mode",
+            selected = st.selectbox(
+                "Select file", list(all_finals.keys()), key="final_file_select"
             )
         else:
-            view_mode = "Single file"
+            selected = next(iter(all_finals))
 
-        if view_mode == "Comparison (all files)":
-            x_unit, laser = render_axis_controls(
-                "fin_cmp",
-                ref_ds.laser_nm,
-                native_type=ref_ds.spectral_units,
-            )
-            st_echarts(
-                make_comparison_echarts(
-                    all_finals, title="Comparison — final processed",
-                    x_unit=x_unit, laser_nm=laser,
-                    src_unit=ref_ds.spectral_unit, native_type=ref_ds.spectral_units,
-                ),
-                height="72vh", key="final_comparison",
-            )
-            _show_images(list(loaded.keys()), loaded, pipeline_params, all_finals)
+        sel_ds: SpectralDataset = loaded[selected]["dataset"]
+        da_sel = all_finals[selected]
 
-        else:
-            if multi:
-                selected = st.selectbox(
-                    "Select file", list(all_finals.keys()), key="final_file_select"
-                )
-            else:
-                selected = next(iter(all_finals))
+        n_spectra = int(da_sel.size // da_sel.shape[-1]) if da_sel.ndim > 1 else 1
+        if n_spectra > 5000:
+            st.warning(
+                f"Large dataset ({n_spectra} spectra). "
+                "Consider using 'density' or 'density_lines' mode.",
+                icon="⚠️",
+            )
 
-            sel_ds: SpectralDataset = loaded[selected]["dataset"]
-            da_sel = all_finals[selected]
+        ctl1, ctl2, ctl3, ctl4 = st.columns([2, 1, 1, 2])
+        color_by = ctl1.selectbox(
+            "Color mode",
+            ["index", "density", "density_lines", "mean_dev"],
+            format_func=lambda x: {
+                "index":         "Index (spectrum order)",
+                "density":       "Density (2D histogram)",
+                "density_lines": "Density lines",
+                "mean_dev":      "Mean deviation",
+            }[x],
+            key="final_color_by",
+        )
+        step = ctl2.number_input(
+            "x step", value=10, min_value=1, step=1, key="final_step",
+            help="Downsample spectral axis by this factor.",
+        )
+        n_bins_input = ctl3.number_input(
+            "n_bins", value=200, min_value=10, max_value=200, step=10, key="final_nbins",
+            help="Intensity bins (density modes only). Max 200.",
+        )
+        chart_title = ctl4.text_input("Chart title", value=selected, key="fin_single_title")
+        n_bins_val = int(n_bins_input) if color_by in ("density", "density_lines") else None
 
-            n_spectra = int(da_sel.size // da_sel.shape[-1]) if da_sel.ndim > 1 else 1
-            if n_spectra > 5000:
-                st.warning(
-                    f"Large dataset ({n_spectra} spectra). "
-                    "Consider using 'density' or 'density_lines' mode.",
-                    icon="⚠️",
-                )
+        x_unit, laser = render_axis_controls(
+            "fin_single",
+            sel_ds.laser_nm,
+            native_type=sel_ds.spectral_units,
+        )
+        st_echarts(
+            _make_final_echarts_cached(
+                loaded[selected]["hash"], pipeline_params, da_sel, chart_title,
+                color_by, n_bins_val, int(step),
+                x_unit, laser, sel_ds.spectral_unit, sel_ds.spectral_units,
+            ),
+            height="72vh", key="final_single",
+        )
 
-            ctl1, ctl2, ctl3 = st.columns([2, 1, 1])
-            color_by = ctl1.selectbox(
-                "Color mode",
-                ["index", "density", "density_lines", "mean_dev"],
-                format_func=lambda x: {
-                    "index":         "Index (spectrum order)",
-                    "density":       "Density (2D histogram)",
-                    "density_lines": "Density lines",
-                    "mean_dev":      "Mean deviation",
-                }[x],
-                key="final_color_by",
-            )
-            step = ctl2.number_input(
-                "x step", value=10, min_value=1, step=1, key="final_step",
-                help="Downsample spectral axis by this factor.",
-            )
-            n_bins_input = ctl3.number_input(
-                "n_bins", value=200, min_value=10, max_value=200, step=10, key="final_nbins",
-                help="Intensity bins (density modes only). Max 200.",
-            )
-            n_bins_val = int(n_bins_input) if color_by in ("density", "density_lines") else None
 
-            x_unit, laser = render_axis_controls(
-                "fin_single",
-                sel_ds.laser_nm,
-                native_type=sel_ds.spectral_units,
-            )
-            st_echarts(
-                _make_final_echarts_cached(
-                    loaded[selected]["hash"], pipeline_params, da_sel, selected,
-                    color_by, n_bins_val, int(step),
-                    x_unit, laser, sel_ds.spectral_unit, sel_ds.spectral_units,
-                ),
-                height="72vh", key="final_single",
-            )
-            _show_images([selected], loaded, pipeline_params, all_finals)
+@st.fragment
+def _render_charts_fragment(
+    all_stages: dict,
+    all_finals: dict,
+    loaded: dict[str, Any],
+    pipeline_params: dict[str, Any],
+    multi: bool,
+    ref_ds: SpectralDataset,
+) -> None:
+    """Fragment that owns both chart tabs.
+
+    Creating st.tabs() inside the fragment (rather than passing tab objects
+    in from outside) is required by Streamlit's fragment contract: fragments
+    may only render into containers they create themselves.
+    """
+    tab_prog, tab_final = st.tabs(["Preprocessing", "Final"])
+    with tab_prog:
+        _render_progress_tab(all_stages, all_finals, loaded, pipeline_params, multi, ref_ds)
+    with tab_final:
+        _render_final_tab(all_finals, loaded, pipeline_params, multi, ref_ds)
 
 
 # ---------------------------------------------------------------------------
@@ -565,6 +504,4 @@ def render_preprocessing_page() -> None:
 
         multi = len(all_finals) > 1
 
-        tab_prog, tab_final = st.tabs(["Preprocessing", "Final"])
-        _render_progress_tab(tab_prog, all_stages, all_finals, loaded, pipeline_params, multi, ref_ds)
-        _render_final_tab(tab_final, all_finals, loaded, pipeline_params, multi, ref_ds)
+        _render_charts_fragment(all_stages, all_finals, loaded, pipeline_params, multi, ref_ds)
