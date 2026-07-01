@@ -648,3 +648,212 @@ def make_final_echarts(
         "dataZoom": _datazoom(),
         "series": series,
     }
+
+
+# ---------------------------------------------------------------------------
+# NMF decomposition / peak deconvolution charts
+# ---------------------------------------------------------------------------
+
+def make_components_echarts(
+    components: np.ndarray,
+    x_native: np.ndarray,
+    spectral_dim: str,
+    title: str = "Component Spectra",
+    x_unit: str = "wavelength",
+    laser_nm: float | None = None,
+    src_unit: str = "",
+    native_type: str = "",
+    x_range: tuple[float, float] | None = None,
+) -> dict:
+    """Overlay NMF component spectra by delegating straight into
+    :func:`make_progress_echarts` — each component is wrapped as a 1-D
+    DataArray sharing the map's spectral coordinate, so no new
+    axis/tooltip/legend building is needed for this chart shape."""
+    stages = {
+        f"Component {i + 1}": xr.DataArray(
+            comp, dims=(spectral_dim,), coords={spectral_dim: x_native}
+        )
+        for i, comp in enumerate(components)
+    }
+    return make_progress_echarts(
+        stages, title,
+        x_unit=x_unit, laser_nm=laser_nm, src_unit=src_unit,
+        native_type=native_type, x_range=x_range,
+    )
+
+
+def make_nmf_diagnostic_echarts(
+    diag: dict,
+    title: str = "NMF Diagnostic Curve",
+) -> dict:
+    """Dual-axis chart: reconstruction error and variance-explained proxy
+    vs. component count k — lets the user pick k from where the curves
+    elbow, rather than relying on an automatic/hidden choice. Points where
+    the fit did not converge within max_iter are drawn as hollow markers
+    rather than hidden, since that non-convergence is itself information
+    the user should see, not a detail to suppress."""
+    k_values = diag["k_values"]
+    err = diag["reconstruction_error"]
+    frac = diag["fraction_var_explained"]
+    converged = diag["converged"]
+
+    err_data = [
+        {"value": [k, e], "symbol": "circle" if c else "emptyCircle",
+         "symbolSize": 8 if c else 12}
+        for k, e, c in zip(k_values, err, converged)
+    ]
+    frac_data = [{"value": [k, f], "symbol": "circle", "symbolSize": 8}
+                 for k, f in zip(k_values, frac)]
+
+    x_axis = {
+        "type": "value",
+        "name": "n_components (k)",
+        "nameLocation": "middle",
+        "nameGap": 35,
+        "nameTextStyle": {"fontSize": FS_AXIS},
+        "axisLabel": {"fontSize": FS_TICK},
+        "min": min(k_values), "max": max(k_values),
+        "minInterval": 1,
+        "splitLine": {"lineStyle": {"color": "#e0e0e0"}},
+    }
+    y_err = {
+        "type": "value",
+        "name": "reconstruction error",
+        "nameLocation": "middle",
+        "nameGap": 60,
+        "nameTextStyle": {"fontSize": FS_AXIS, "color": COLORS[0]},
+        "axisLabel": {"fontSize": FS_TICK, "color": COLORS[0]},
+        "splitLine": {"lineStyle": {"color": "#e0e0e0"}},
+    }
+    y_frac = {
+        "type": "value",
+        "name": "variance-explained proxy",
+        "nameLocation": "middle",
+        "nameGap": 50,
+        "nameTextStyle": {"fontSize": FS_AXIS, "color": COLORS[1]},
+        "axisLabel": {"fontSize": FS_TICK, "color": COLORS[1]},
+        "splitLine": {"show": False},
+        "min": 0, "max": 1,
+    }
+
+    tooltip_js = """function(params) {
+    if (!params || !params.length) return '';
+    var k = params[0].value[0];
+    var html = '<b>k = ' + k + '</b><br/>';
+    params.forEach(function(p) {
+        html += p.marker + ' ' + p.seriesName + ':&ensp;<b>' + p.value[1].toPrecision(4) + '</b><br/>';
+    });
+    return html;
+}"""
+
+    return {
+        "title": _base_title(title),
+        "grid": _base_grid(right=110),
+        "xAxis": [x_axis],
+        "yAxis": [y_err, y_frac],
+        "legend": {
+            "type": "scroll", "orient": "horizontal", "bottom": 55,
+            "textStyle": {"fontSize": FS_LEGEND},
+        },
+        "tooltip": {"trigger": "axis", "formatter": JsCode(tooltip_js)},
+        "toolbox": _download_toolbox(),
+        "series": [
+            {
+                "type": "line", "name": "reconstruction error",
+                "xAxisIndex": 0, "yAxisIndex": 0,
+                "data": err_data,
+                "lineStyle": {"color": COLORS[0], "width": 2},
+                "itemStyle": {"color": COLORS[0]},
+            },
+            {
+                "type": "line", "name": "variance-explained proxy",
+                "xAxisIndex": 0, "yAxisIndex": 1,
+                "data": frac_data,
+                "lineStyle": {"color": COLORS[1], "width": 2},
+                "itemStyle": {"color": COLORS[1]},
+            },
+        ],
+    }
+
+
+def make_deconv_fit_echarts(
+    fit_result,
+    spectral_dim: str,
+    title: str = "Peak Deconvolution",
+    x_unit: str = "wavelength",
+    laser_nm: float | None = None,
+    src_unit: str = "",
+    native_type: str = "",
+) -> dict:
+    """Raw spectrum + total fit + per-band dashed sub-curves, with the
+    residual on a secondary y-axis (the same dual-y-axis idiom as
+    :func:`make_nmf_diagnostic_echarts`) — built from the same
+    axis/tooltip/toolbox helpers :func:`make_progress_echarts` uses
+    internally, so only the series list and the extra y-axis are new.
+
+    ``fit_result`` is a :class:`peak_fitter.FitResult`.
+    """
+    x_disp = convert_x(
+        fit_result.x, spectral_dim, x_unit, laser_nm,
+        src_unit=src_unit, native_type=native_type,
+    )
+    x_primary, x_secondary, y_axis = _make_axes(x_disp, x_unit, laser_nm)
+
+    y_residual = {
+        "type": "value",
+        "name": "residual",
+        "nameLocation": "middle",
+        "nameGap": 50,
+        "nameTextStyle": {"fontSize": FS_AXIS, "color": "#888"},
+        "axisLabel": {"fontSize": FS_TICK, "color": "#888"},
+        "splitLine": {"show": False},
+    }
+
+    x_list = x_disp.tolist()
+    series = [
+        {
+            "type": "line", "name": "data",
+            "xAxisIndex": 0, "yAxisIndex": 0,
+            "data": list(zip(x_list, fit_result.y_data.tolist())),
+            "lineStyle": {"color": "#888888", "width": 1.5},
+            "symbol": "none",
+        },
+        {
+            "type": "line", "name": "total fit",
+            "xAxisIndex": 0, "yAxisIndex": 0,
+            "data": list(zip(x_list, fit_result.y_fit.tolist())),
+            "lineStyle": {"color": COLORS[0], "width": 2.5},
+            "symbol": "none",
+        },
+        {
+            "type": "line", "name": "residual",
+            "xAxisIndex": 0, "yAxisIndex": 1,
+            "data": list(zip(x_list, fit_result.residual.tolist())),
+            "lineStyle": {"color": "#aaaaaa", "width": 1, "type": "dotted"},
+            "symbol": "none",
+        },
+    ]
+    for i, band in enumerate(fit_result.bands):
+        color = COLORS[(i + 1) % len(COLORS)]
+        series.append({
+            "type": "line", "name": band.label,
+            "xAxisIndex": 0, "yAxisIndex": 0,
+            "data": list(zip(x_list, band.curve.tolist())),
+            "lineStyle": {"color": color, "width": 2, "type": "dashed"},
+            "symbol": "none",
+        })
+
+    return {
+        "title": _base_title(title),
+        "grid": _base_grid(),
+        "xAxis": [x_primary, x_secondary],
+        "yAxis": [y_axis, y_residual],
+        "legend": {
+            "type": "scroll", "orient": "horizontal", "bottom": 55,
+            "textStyle": {"fontSize": FS_LEGEND},
+        },
+        "tooltip": _tooltip_with_ev(x_unit),
+        "toolbox": _download_toolbox(),
+        "dataZoom": _datazoom(),
+        "series": series,
+    }
