@@ -27,7 +27,7 @@ _HARMONIC_WAVELENGTHS_NM: tuple[float, ...] = (1064.0, 532.0, 355.0, 266.0)
 _SEARCH_HALF_WIDTH_NM = 2.5
 
 # Total removal width in wavelength space (nm).
-_NOTCH_FULL_WIDTH_NM = 1.0
+_NOTCH_FULL_WIDTH_NM = 2
 
 
 def read_laser_wavelength_nm(attrs: Mapping[str, Any]) -> float | None:

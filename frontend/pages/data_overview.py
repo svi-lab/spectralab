@@ -30,6 +30,7 @@ def _render_file_info(loaded: dict) -> None:
             ds = entry["dataset"]
             lp = ds.laser_power
             et = ds.exposure_time
+            comment_line = f"<b>Comment:</b> {ds.comment}<br>" if ds.comment else ""
             st.markdown(
                 f'<div class="info-box">'
                 f"<b>File:</b> {name}<br>"
@@ -38,7 +39,8 @@ def _render_file_info(loaded: dict) -> None:
                 f"<b>Ndim:</b> {ds.ndim}<br>"
                 f"<b>Kind:</b> {ds.measurement_kind} ({ds.spectral_units or '—'})<br>"
                 f"<b>Laser power:</b> {'—' if math.isnan(lp) else f'{lp:.4g}'}<br>"
-                f"<b>Exposure time:</b> {'—' if math.isnan(et) else f'{et:.4g}'}"
+                f"<b>Exposure time:</b> {'—' if math.isnan(et) else f'{et:.4g}'}<br>"
+                f"{comment_line}"
                 f"</div>",
                 unsafe_allow_html=True,
             )
@@ -49,6 +51,7 @@ def _render_file_info(loaded: dict) -> None:
                 lp = ds.laser_power
                 et = ds.exposure_time
                 with st.expander(name, expanded=True):
+                    comment_line = f"<b>Comment:</b> {ds.comment}<br>" if ds.comment else ""
                     st.markdown(
                         f'<div class="info-box">'
                         f"<b>Dims:</b> {ds.dims}<br>"
@@ -56,7 +59,8 @@ def _render_file_info(loaded: dict) -> None:
                         f"<b>Ndim:</b> {ds.ndim}<br>"
                         f"<b>Kind:</b> {ds.measurement_kind} ({ds.spectral_units or '—'})<br>"
                         f"<b>Laser power:</b> {'—' if math.isnan(lp) else f'{lp:.4g}'}<br>"
-                        f"<b>Exposure time:</b> {'—' if math.isnan(et) else f'{et:.4g}'}"
+                        f"<b>Exposure time:</b> {'—' if math.isnan(et) else f'{et:.4g}'}<br>"
+                        f"{comment_line}"
                         f"</div>",
                         unsafe_allow_html=True,
                     )

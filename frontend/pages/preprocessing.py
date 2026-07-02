@@ -9,6 +9,7 @@ import streamlit as st
 from streamlit_echarts import st_echarts
 
 from backend._shared.dataset import SpectralDataset
+from ..export_utils import spectra_to_npz
 from ..charts import convert_x, make_comparison_echarts, make_final_echarts, make_progress_echarts
 from ..controls import (
     X_UNIT_FMT,
@@ -447,6 +448,12 @@ def _render_final_tab(
                 x_unit, laser, sel_ds.spectral_unit, sel_ds.spectral_units,
             ),
             height="72vh", key="final_single",
+        )
+        st.download_button(
+            "Export processed data (.npz)",
+            spectra_to_npz(da_sel),
+            file_name=f"{selected}_processed.npz",
+            key="preproc_export_npz",
         )
 
 
