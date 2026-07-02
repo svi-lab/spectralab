@@ -44,6 +44,7 @@ class SpectralDataset:
     image_meta:     dict[str, Any] | None
     laser_power:    float              # NaN if not reported
     exposure_time:  float              # NaN if not reported
+    comment:        str                # "" if not present
     dims:           tuple
     shape:          tuple
     ndim:           int

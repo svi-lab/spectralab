@@ -8,6 +8,7 @@ from streamlit_echarts import st_echarts
 
 from backend._shared.dataset import SpectralDataset
 from backend.spectra_decomposer import Decomposer, compute_nmf_diagnostic_curve
+from ..export_utils import nmf_to_npz
 
 from ..charts import make_components_echarts, make_nmf_diagnostic_echarts
 from ..controls import render_axis_controls, render_nmf_params
@@ -190,6 +191,12 @@ def render_decomposition_page() -> None:
                         "may be less stable. Consider raising max_iter in Advanced "
                         "NMF parameters."
                     )
+                st.download_button(
+                    "Export NMF result (.npz)",
+                    nmf_to_npz(nmf_result),
+                    file_name=f"{map_name}_nmf.npz",
+                    key="nmf_export_npz",
+                )
         elif nmf_result is not None:
             st.caption(f"Last NMF result was for **{nmf_result['file_name']}** — run again for **{map_name}**.")
 

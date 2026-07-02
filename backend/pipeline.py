@@ -110,6 +110,7 @@ def load_wdf(file_bytes: bytes) -> SpectralDataset:
         image_meta     = image_meta,
         laser_power    = _float_attr("laser_power"),
         exposure_time  = _float_attr("exposure_time"),
+        comment        = da.attrs.get("comment") or "",
         dims           = da.dims,
         shape          = da.shape,
         ndim           = da.ndim,

@@ -13,6 +13,7 @@ from streamlit_echarts import st_echarts
 
 from backend._shared.dataset import SpectralDataset
 from backend.peak_fitter import BandSpec, FitResult, PeakFitter, fit_map_gaussian
+from ..export_utils import batch_fit_to_npz, fit_curves_to_npz
 
 from ..charts import make_deconv_fit_echarts
 from ..controls import render_axis_controls
@@ -278,6 +279,12 @@ def render_deconvolution_page() -> None:
                 mime="text/csv",
                 key="deconv_download_single",
             )
+            st.download_button(
+                "Export fit curves (.npz)",
+                fit_curves_to_npz(fit_result),
+                file_name=f"{file_name}_deconv_curves.npz",
+                key="deconv_export_curves_npz",
+            )
 
         if batch_clicked:
             bands = _bands_from_table(bands_table)
@@ -326,4 +333,14 @@ def render_deconvolution_page() -> None:
                 file_name=f"{file_name}_batch_fit.csv",
                 mime="text/csv",
                 key="deconv_download_batch",
+            )
+            st.download_button(
+                "Export parameter maps (.npz)",
+                batch_fit_to_npz(
+                    batch_result, labels,
+                    da_final.coords[spatial_dims[0]].values,
+                    da_final.coords[spatial_dims[1]].values,
+                ),
+                file_name=f"{file_name}_batch_fit.npz",
+                key="deconv_export_batch_npz",
             )
