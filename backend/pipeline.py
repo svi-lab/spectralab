@@ -18,6 +18,8 @@ from spectra_smoother import SpectraSmoother
 from _shared.clean_data import CleanData
 from _shared.normalize import normalize
 from _shared.dataset import SpectralDataset, validate_spectral_dataset
+from background import BackgroundSuppressor
+from background._scale import interp_reference
 
 
 # ---------------------------------------------------------------------------
@@ -143,8 +145,15 @@ def preprocess(
     da: xr.DataArray = dataset.da
     stages: dict[str, xr.DataArray] = {}
 
+    # Background suppression always operates outside normalization: the
+    # subtraction runs on data after all selected preprocessing steps but
+    # WITHOUT min-max/area normalization (which is data-dependent and would
+    # invalidate the physics scale and distort the fitted one). The user's
+    # chosen normalization still runs — deferred until after the subtraction.
+    defer_norm = bool(params.get("bg_enabled"))
+
     # ── Normalization 1 (raw) ──────────────────────────────────────────
-    if params.get("norm1_enabled"):
+    if params.get("norm1_enabled") and not defer_norm:
         da = _apply_normalize(da, params["norm1"])
         stages["Normalized (raw)"] = da
     else:
@@ -172,7 +181,7 @@ def preprocess(
             map_n_components=crr_p["map_n_components"],
         )
         da = crr.remove(da)
-        if params.get("norm2_enabled"):
+        if params.get("norm2_enabled") and not defer_norm:
             da = _apply_normalize(da, params["norm2"])
             stages["Normalized (post-CR)"] = da
         else:
@@ -206,11 +215,39 @@ def preprocess(
             smoother=smoother,
         )
         da = denoiser.denoise(da)
-        if params.get("norm3_enabled"):
+        if params.get("norm3_enabled") and not defer_norm:
             da = _apply_normalize(da, params["norm3"])
             stages["Normalized (final)"] = da
         else:
             stages["Denoised"] = da
+
+    # ── Background Suppression ─────────────────────────────────────────
+    if params.get("bg_enabled"):
+        bg_p = params["bg"]
+        reference = np.asarray(bg_p["reference"], dtype=float)
+        spectral_coords = da.coords[dataset.spectral_dim].values
+
+        # Interpolate reference onto the data's spectral axis if needed
+        if len(reference) != len(spectral_coords):
+            ref_x = np.asarray(bg_p["reference_x"], dtype=float)
+            reference, _ = interp_reference(ref_x, reference, spectral_coords)
+
+        suppressor = BackgroundSuppressor(
+            reference=reference,
+            spectral_dim=dataset.spectral_dim,
+            fixed_scale=bg_p["fixed_scale"],
+        )
+        da, _bg_meta = suppressor.suppress(da)
+        stages["Background removed"] = da
+
+        # Deferred normalization: apply the user's chosen method now that the
+        # subtraction has happened in raw intensity space.
+        if defer_norm and (params.get("norm1_enabled") or params.get("norm2_enabled")
+                           or params.get("norm3_enabled")):
+            norm_p = params.get("norm1") or params.get("norm2") or params.get("norm3") or {}
+            if norm_p.get("method"):
+                da = _apply_normalize(da, norm_p)
+                stages["Normalized (post-suppression)"] = da
 
     return stages, da
 
