@@ -9,7 +9,12 @@ import streamlit as st
 from streamlit_echarts import st_echarts
 
 from backend._shared.dataset import SpectralDataset
-from ..export_utils import spectra_to_npz
+from backend.background._presets import (
+    list_materials,
+    list_temperatures,
+    list_thicknesses,
+    load_preset,
+)
 from ..charts import convert_x, make_comparison_echarts, make_final_echarts, make_progress_echarts
 import numpy as np
 
@@ -32,6 +37,7 @@ from ..pipeline_cache import get_finals
 _BG_WIDGET_KEYS = (
     "bg_ref_source", "bg_ref_file", "bg_row_min", "bg_row_max",
     "bg_col_min", "bg_col_max",
+    "bg_preset_material", "bg_preset_thickness", "bg_preset_temp",
     "bg_pt_ratio", "bg_c_override_on", "bg_c_override",
 )
 
@@ -113,6 +119,18 @@ def _restore_widget_state() -> None:
             continue
         if key == "bg_ref_source" and "Map region" in str(val) and not target_is_map:
             continue
+        if key == "bg_preset_material" and val not in list_materials():
+            continue
+        if key == "bg_preset_thickness":
+            material = bg_ui.get("bg_preset_material") or ss.get("bg_preset_material")
+            if material and val not in list_thicknesses(material):
+                continue
+        if key == "bg_preset_temp":
+            material = bg_ui.get("bg_preset_material") or ss.get("bg_preset_material")
+            thickness = bg_ui.get("bg_preset_thickness") or ss.get("bg_preset_thickness")
+            thickness_mm = int(thickness) if material == "glass" and thickness is not None else None
+            if material and val not in list_temperatures(material, thickness_mm):
+                continue
         ss[key] = val
 
     # ── Denoiser ──────────────────────────────────────────────────────────────
@@ -226,6 +244,18 @@ def _resolve_reference(
             return None, None, "Selected map region is all-NaN."
         return ref_y, None, None
 
+    elif source == "Built-in preset":
+        preset_key = ref_p.get("preset_key")
+        if not preset_key:
+            return None, None, "No built-in preset selected."
+        try:
+            ref_x, ref_y, _meta = load_preset(preset_key)
+        except (FileNotFoundError, KeyError) as e:
+            return None, None, f"Failed to load preset: {e}"
+        if np.all(np.isnan(ref_y)):
+            return None, None, "Selected preset is all-NaN."
+        return ref_y, ref_x, None
+
     return None, None, "Unknown reference source."
 
 
@@ -262,6 +292,33 @@ def _render_physics_scale(bg_params_raw: dict, loaded: dict, ds_name: str) -> fl
     if "Map region" in source:
         ratio = 1.0
         ratio_note = "same file → ratio = 1"
+    elif source == "Built-in preset":
+        preset_key = bg_params_raw.get("ref_params", {}).get("preset_key")
+        tgt = loaded[ds_name]["dataset"]
+        pt_y = tgt.laser_power * tgt.exposure_time
+        try:
+            _ref_x, _ref_y, preset_meta = load_preset(preset_key)
+            pt_r = preset_meta["laser_power"] * preset_meta["exposure_time"]
+        except (FileNotFoundError, KeyError, TypeError):
+            pt_r = float("nan")
+        if np.isfinite(pt_y) and np.isfinite(pt_r) and pt_r > 0:
+            ratio = pt_y / pt_r
+            ratio_note = (
+                f"(P·t)ₛ {tgt.laser_power:g}×{tgt.exposure_time:g} / "
+                f"(P·t)preset {preset_meta['laser_power']:g}×{preset_meta['exposure_time']:g}"
+            )
+        else:
+            ratio = float(st.number_input(
+                "Power × exposure ratio (sample / reference)",
+                value=1.0, min_value=0.0, step=0.1, format="%.3f",
+                key="bg_pt_ratio",
+                help=(
+                    "Laser power or exposure time is missing from the file "
+                    "metadata — enter (P_sample·t_sample)/(P_ref·t_ref) manually. "
+                    "1.0 = identical acquisition conditions."
+                ),
+            ))
+            ratio_note = "metadata missing — manual"
     else:
         tgt = loaded[ds_name]["dataset"]
         ref_name = bg_params_raw.get("ref_params", {}).get("ref_file")
@@ -685,12 +742,6 @@ def _render_final_tab(
                 x_unit, laser, sel_ds.spectral_unit, sel_ds.spectral_units,
             ),
             height="72vh", key="final_single",
-        )
-        st.download_button(
-            "Export processed data (.npz)",
-            spectra_to_npz(da_sel),
-            file_name=f"{selected}_processed.npz",
-            key="preproc_export_npz",
         )
 
 

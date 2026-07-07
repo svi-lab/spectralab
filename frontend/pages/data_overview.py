@@ -16,6 +16,8 @@ from backend.optics import (
     film_stack_summary,
     lookup_substrate_nk,
 )
+from ..export_utils import mean_spectrum_to_npz, spectra_to_npz
+from ..pipeline_cache import default_pipeline_params, get_finals
 
 
 @st.cache_data(show_spinner=False, max_entries=16)
@@ -95,6 +97,98 @@ def _render_images(loaded: dict) -> None:
                 if geo is not None and ds.image_meta is not None:
                     arr = _draw_overlay_cached(file_hash, arr, ds.image_meta, geo)
                 col.image(arr, width="stretch")
+
+
+def _export_stem(name: str) -> str:
+    """Strip trailing .wdf for download filenames."""
+    lower = name.lower()
+    if lower.endswith(".wdf"):
+        return name[: -len(".wdf")]
+    return name
+
+
+def _pipeline_export_caption(params: dict | None) -> str:
+    if params is None:
+        return (
+            "No preprocessing set — visit the Preprocessing page first; "
+            "exporting raw data."
+        )
+    stages: list[str] = []
+    if params.get("norm1_enabled") or params.get("norm2_enabled") or params.get("norm3_enabled"):
+        stages.append("normalization")
+    if params.get("cd_enabled"):
+        stages.append("clean data")
+    if params.get("crr_enabled"):
+        stages.append("CRR")
+    if params.get("denoise_enabled"):
+        stages.append("denoising")
+    if params.get("bg_enabled"):
+        stages.append("background suppression")
+    if not stages:
+        return "No preprocessing stages enabled — exporting raw data."
+    return "Export includes: " + ", ".join(stages) + "."
+
+
+@st.cache_data(show_spinner=False, max_entries=16)
+def _full_npz_cached(file_hash: str, pipeline_params: dict, _da) -> bytes:
+    return spectra_to_npz(_da)
+
+
+@st.cache_data(show_spinner=False, max_entries=16)
+def _mean_npz_cached(file_hash: str, pipeline_params: dict, _da) -> bytes:
+    return mean_spectrum_to_npz(_da)
+
+
+def _render_exports(loaded: dict) -> None:
+    with st.container(border=True):
+        st.markdown('<p class="section-header">Export</p>', unsafe_allow_html=True)
+
+        stored_params = st.session_state.get("sl_pipeline_params")
+        st.caption(_pipeline_export_caption(stored_params))
+        params = stored_params or default_pipeline_params()
+
+        _, all_finals, errors = get_finals(loaded, params)
+        for err in errors:
+            st.error(f"Processing error — {err}")
+        if not all_finals:
+            st.warning("No exportable data — fix processing errors above.")
+            return
+
+        file_names = list(loaded.keys())
+        selected = st.multiselect(
+            "Files to export",
+            file_names,
+            default=file_names,
+            key="data_export_files",
+        )
+        if not selected:
+            st.info("Select at least one file to export.")
+            return
+
+        for name in selected:
+            if name not in all_finals:
+                continue
+            da_final = all_finals[name]
+            file_hash = loaded[name]["hash"]
+            stem = _export_stem(name)
+
+            st.markdown(f"**{name}**")
+            btn_cols = st.columns(2 if da_final.ndim > 1 else 1)
+            with btn_cols[0]:
+                st.download_button(
+                    "Full spectra (.npz)",
+                    _full_npz_cached(file_hash, params, da_final),
+                    file_name=f"{stem}.npz",
+                    key=f"export_full_{file_hash}",
+                )
+            if da_final.ndim > 1:
+                with btn_cols[1]:
+                    st.download_button(
+                        "Mean spectrum (.npz)",
+                        _mean_npz_cached(file_hash, params, da_final),
+                        file_name=f"{stem}_mean.npz",
+                        key=f"export_mean_{file_hash}",
+                    )
 
 
 def _fmt_nm(val_nm: float) -> str:
@@ -340,3 +434,4 @@ def render_data_page() -> None:
 
     with right:
         _render_images(loaded)
+        _render_exports(loaded)
