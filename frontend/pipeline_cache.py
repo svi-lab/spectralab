@@ -30,6 +30,7 @@ def default_pipeline_params() -> dict[str, Any]:
         "norm2_enabled": False, "norm2": {},
         "denoise_enabled": False, "denoise": {},
         "norm3_enabled": False, "norm3": {},
+        "bg_enabled":    False, "bg":    {},
     }
 
 

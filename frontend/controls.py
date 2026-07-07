@@ -7,6 +7,15 @@ from typing import Any
 
 import streamlit as st
 
+from backend.background._presets import (
+    find_preset,
+    format_temperature_label,
+    list_materials,
+    list_presets,
+    list_temperatures,
+    list_thicknesses,
+)
+
 
 X_UNIT_OPTIONS = ["wavelength", "energy", "wavenumber", "raman_shift"]
 X_UNIT_FMT = {
@@ -338,6 +347,128 @@ def render_denoising_params() -> dict[str, Any]:
     )
 
 
+def render_bg_params(
+    loaded: dict,
+    ds_name: str,
+    is_map: bool,
+) -> dict[str, Any]:
+    """Render Background Suppression parameter widgets.
+
+    Parameters
+    ----------
+    loaded   : st.session_state["sl_loaded"] — all loaded files
+    ds_name  : name of the file being processed (the "target")
+    is_map   : whether the target dataset is a map (enables per-pixel and region options)
+
+    Returns bg_params dict consumed by BackgroundSuppressor + pipeline.preprocess.
+    """
+    other_files = [n for n in loaded if n != ds_name]
+
+    # ── Reference source ─────────────────────────────────────────────────
+    source_options = ["Built-in preset", "Loaded file (mean)"]
+    if is_map:
+        source_options.append("Map region (pixel block)")
+    ref_source = st.radio(
+        "Reference source",
+        source_options,
+        key="bg_ref_source",
+        horizontal=True,
+    )
+
+    ref_params: dict[str, Any] = {"source": ref_source}
+
+    if ref_source == "Built-in preset":
+        presets = list_presets()
+        if not presets:
+            st.warning("No built-in substrate presets found in backend/background/data/.")
+            return {"valid": False}
+
+        materials = list_materials()
+        material = st.selectbox(
+            "Substrate material",
+            materials,
+            key="bg_preset_material",
+            format_func=lambda m: {"glass": "Glass", "SiO2": "SiO₂", "Si": "Si"}.get(m, m),
+        )
+
+        thickness_mm: int | None = None
+        if material == "glass":
+            thicknesses = list_thicknesses(material)
+            if not thicknesses:
+                st.warning(f"No thickness presets found for {material}.")
+                return {"valid": False}
+            thickness_mm = st.selectbox(
+                "Glass thickness",
+                thicknesses,
+                key="bg_preset_thickness",
+                format_func=lambda t: f"{t} mm",
+            )
+
+        temperatures = list_temperatures(material, thickness_mm)
+        if not temperatures:
+            st.warning("No temperature presets match the selected material/thickness.")
+            return {"valid": False}
+        temperature = st.selectbox(
+            "Substrate temperature",
+            temperatures,
+            key="bg_preset_temp",
+            format_func=format_temperature_label,
+        )
+
+        preset = find_preset(material, temperature, thickness_mm)
+        if preset is None:
+            st.error("Selected preset combination is not available.")
+            return {"valid": False}
+        ref_params["preset_key"] = preset.key
+        st.caption(f"Preset: `{preset.key}`")
+
+    elif ref_source == "Loaded file (mean)":
+        if not other_files:
+            st.warning("Load a bare-substrate file alongside your sample file to use this option.")
+            return {"valid": False}
+        # Files marked "Bare substrate" on the Data page come first and are labelled.
+        ss_struct = st.session_state.get("sl_sample_structure", {})
+        sub_files = [n for n in other_files
+                     if ss_struct.get(n, {}).get("sample_type") == "substrate"]
+        candidates = sub_files + [n for n in other_files if n not in sub_files]
+        ref_file = st.selectbox(
+            "Reference file", candidates, key="bg_ref_file",
+            format_func=lambda n: f"{n} — substrate" if n in sub_files else n,
+        )
+        ref_params["ref_file"] = ref_file
+        ref_ds = loaded[ref_file]["dataset"]
+        if ref_ds.laser_nm is not None:
+            ds_laser = loaded[ds_name]["dataset"].laser_nm
+            if ds_laser is not None and abs(ref_ds.laser_nm - ds_laser) > 5:
+                st.warning(
+                    f"Reference laser ({ref_ds.laser_nm:g} nm) differs from "
+                    f"target ({ds_laser:g} nm) by >{5} nm."
+                )
+    else:
+        if not is_map:
+            st.info("Region selection is only available for map datasets.")
+            return {"valid": False}
+        c1, c2 = st.columns(2)
+        row_min = c1.number_input("Row min", value=0, min_value=0, step=1, key="bg_row_min")
+        row_max = c2.number_input("Row max", value=0, min_value=0, step=1, key="bg_row_max")
+        c3, c4 = st.columns(2)
+        col_min = c3.number_input("Col min", value=0, min_value=0, step=1, key="bg_col_min")
+        col_max = c4.number_input("Col max", value=0, min_value=0, step=1, key="bg_col_max")
+        ref_params.update({"row_min": int(row_min), "row_max": int(row_max),
+                           "col_min": int(col_min), "col_max": int(col_max)})
+
+    st.caption(
+        "c comes from the optical model entered on the **Data page** "
+        "(Sample Structure). The factor breakdown is shown below."
+    )
+
+    return {
+        "valid": True,
+        "ref_params": ref_params,
+        "scale_mode": "physics",
+    }
+
+
 def render_nmf_params() -> dict[str, Any]:
     """Render advanced NMF parameter widgets. Returns nmf_params dict.
 
@@ -374,5 +505,58 @@ def render_nmf_params() -> dict[str, Any]:
     return dict(
         init=init,
         max_iter=int(max_iter),
+        random_state=int(random_state),
+    )
+
+
+def render_mcr_params() -> dict[str, Any]:
+    """Render advanced MCR-ALS solver widgets. Returns an mcr_params dict.
+
+    Every knob here has a sensible default and stays collapsed, so a chemist
+    can run MCR-ALS without touching any of it — the physical choices (how
+    many components, whether to pin a reference) live on the page itself, not
+    in this expander.
+
+    Deliberately excludes ``n_components`` (chosen on the page from the SVD
+    scree) and the equality reference (a page-level, physical choice).
+    """
+    with st.expander("Advanced MCR-ALS parameters", expanded=False):
+        col1, col2 = st.columns(2)
+        max_iter = col1.number_input(
+            "max_iter", value=200, min_value=20, step=20,
+            key="mcr_max_iter",
+            help=(
+                "Hard cap on ALS iterations. The fit normally stops earlier "
+                "when the change in lack-of-fit falls below the convergence "
+                "threshold."
+            ),
+        )
+        tol = col2.number_input(
+            "Convergence threshold (%ΔLOF)", value=0.1, min_value=0.001,
+            max_value=5.0, step=0.05, format="%.3f", key="mcr_tol",
+            help=(
+                "Stop when the lack-of-fit (%LOF) changes by less than this "
+                "between iterations. 0.1% is the common default."
+            ),
+        )
+        col3, col4 = st.columns(2)
+        simplisma_offset = col3.number_input(
+            "SIMPLISMA noise offset (%)", value=5.0, min_value=0.1,
+            max_value=50.0, step=1.0, key="mcr_offset",
+            help=(
+                "Noise floor for the pure-pixel search that seeds the fit. "
+                "Higher values are more robust to noisy spectra; 5% is a good "
+                "default."
+            ),
+        )
+        random_state = col4.number_input(
+            "random_state (seed)", value=0, min_value=0, step=1,
+            key="mcr_random_state",
+            help="Seed for subsampling in the rank/ambiguity diagnostics.",
+        )
+    return dict(
+        max_iter=int(max_iter),
+        tol=float(tol),
+        simplisma_offset=float(simplisma_offset) / 100.0,
         random_state=int(random_state),
     )

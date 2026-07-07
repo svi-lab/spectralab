@@ -72,8 +72,27 @@ class FitResult:
     raw_lmfit_result: Any
 
 
-def _estimate_sigma_guess(x: np.ndarray, n_bands: int) -> float:
-    """A starting width: the visible spectral span divided among the bands."""
+def _estimate_sigma_guess(
+    x: np.ndarray,
+    n_bands: int,
+    center_min: float | None = None,
+    center_max: float | None = None,
+) -> float:
+    """A starting width: scaled to the band's own bound window when given,
+    otherwise the visible spectral span divided among the bands.
+
+    A uniform span-based guess can badly mismatch a tightly-bounded band
+    (e.g. one of many closely-spaced literature positions, each bounded to
+    only a few nm so neighboring bands can't swap positions) — starting a
+    ~6 nm-wide guess inside a 1.5 nm-wide allowed window ill-conditions the
+    fit badly enough to prevent convergence entirely. Scaling to the band's
+    own window keeps the initial guess on the same scale as what it can
+    actually explore.
+    """
+    if center_min is not None and center_max is not None:
+        window = center_max - center_min
+        if window > 0:
+            return max(window / 4, np.finfo(float).eps)
     span = float(np.max(x) - np.min(x))
     return max(span / (4 * max(n_bands, 1)), np.finfo(float).eps)
 
@@ -113,7 +132,7 @@ def _build_composite_model(
         sigma_guess = (
             band.sigma_guess
             if band.sigma_guess is not None
-            else _estimate_sigma_guess(x, len(bands))
+            else _estimate_sigma_guess(x, len(bands), band.center_min, band.center_max)
         )
         amplitude_guess = (
             band.amplitude_guess
@@ -183,7 +202,12 @@ class PeakFitter:
                         max=params_init[name].max,
                     )
 
-        result = model.fit(y_fit_data, params, x=x_fit)
+        # lmfit's default 'leastsq' (MINPACK) handles bounds via an internal
+        # reparametrization that conditions badly for tightly-bounded parameters
+        # (e.g. closely-spaced preset bands) -- it can burn through the entire
+        # max_nfev budget without converging. scipy's natively-bounded
+        # 'least_squares' handles the same problem in a fraction of the calls.
+        result = model.fit(y_fit_data, params, x=x_fit, method="least_squares")
 
         y_fit_curve = result.eval(x=x_fit)
         residual = y_fit_data - y_fit_curve

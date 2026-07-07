@@ -101,6 +101,48 @@ def convert_x(
     return x_nm
 
 
+def convert_x_to_native(
+    x_display: float,
+    src_dim: str,
+    display_unit: str,
+    laser_nm: float | None = None,
+    *,
+    src_unit: str = "",
+    native_type: str = "",
+) -> float:
+    """Inverse of convert_x: a single value in display_unit -> the dataset's native units.
+
+    Used to turn a chart click (reported in display units, since chart series data is
+    built via convert_x) back into the native units BandSpec.center_guess expects.
+    """
+    # display_unit -> nm
+    if display_unit == "wavelength":
+        x_nm = float(x_display)
+    elif display_unit == "energy":
+        x_nm = 1239.84 / float(x_display)
+    elif display_unit == "wavenumber":
+        x_nm = 1e7 / float(x_display)
+    elif display_unit == "raman_shift":
+        if laser_nm is None:
+            raise ValueError("laser_nm is required to convert Raman shift to other units")
+        x_nm = 1e7 / (1e7 / laser_nm - float(x_display))
+    else:
+        x_nm = float(x_display)
+
+    # nm -> native (same native-class detection as convert_x)
+    nt = native_type.lower().replace("_", "").replace(" ", "")
+    u = src_unit.lower()
+    if nt == "ramanshift" or (not nt and ("raman" in src_dim.lower() or "shift" in src_dim.lower())):
+        if laser_nm is None:
+            raise ValueError("laser_nm is required for Raman shift conversion")
+        return (1.0 / laser_nm - 1.0 / x_nm) * 1e7
+    if nt == "nanometer" or (not nt and ("wavelength" in src_dim.lower() or "nm" in u)):
+        return x_nm
+    if nt == "electronvolt" or (not nt and "ev" in u):
+        return 1239.84 / x_nm
+    return 1e7 / x_nm  # Wavenumber, cm^-1, or unknown fallback
+
+
 # ---------------------------------------------------------------------------
 # Axis helpers
 # ---------------------------------------------------------------------------
@@ -281,9 +323,18 @@ def _base_grid(right: int = 80) -> dict:
     return {"top": 120, "bottom": 155, "left": 80, "right": right}
 
 
-def _datazoom(start_value=None, end_value=None) -> list:
+def _datazoom(
+    start_value=None,
+    end_value=None,
+    x_unit: str = "wavelength",
+) -> list:
     inside = {"type": "inside", "xAxisIndex": 0}
     slider = {"type": "slider", "xAxisIndex": 0, "bottom": 10, "height": 35}
+    if x_unit == "energy":
+        fmt_js = "function(v) { return v.toFixed(2); }"
+    else:
+        fmt_js = "function(v) { return Math.round(v); }"
+    slider["labelFormatter"] = JsCode(fmt_js)
     if start_value is not None:
         inside["startValue"] = start_value
         slider["startValue"] = start_value
@@ -406,6 +457,7 @@ def make_progress_echarts(
         "dataZoom": _datazoom(
             start_value=x_range[0] if x_range else None,
             end_value=x_range[1] if x_range else None,
+            x_unit=x_unit,
         ),
         "series": series,
     }
@@ -468,27 +520,26 @@ def make_comparison_echarts(
         "dataZoom": _datazoom(
             start_value=x_range[0] if x_range else None,
             end_value=x_range[1] if x_range else None,
+            x_unit=x_unit,
         ),
         "series": series,
     }
 
 
 # ---------------------------------------------------------------------------
-# Final chart (4 modes)
+# Final chart (2 modes)
 # ---------------------------------------------------------------------------
 
 def make_final_echarts(
     da: xr.DataArray,
     title: str,
     color_by: str = "index",
-    n_bins: int | None = None,
-    step: int = 10,
     x_unit: str = "wavelength",
     laser_nm: float | None = None,
     src_unit: str = "",
     native_type: str = "",
 ) -> dict:
-    """Multi-mode final plot (density, density_lines, index, mean_dev)."""
+    """Multi-mode final plot (index, mean_dev)."""
     spectral_dim = da.dims[-1]
     x_native = da.coords[spectral_dim].values
     x_f = convert_x(x_native, spectral_dim, x_unit, laser_nm, src_unit=src_unit, native_type=native_type)
@@ -504,7 +555,7 @@ def make_final_echarts(
             "legend": {"show": False},
             "tooltip": _tooltip_x_with_ev(x_unit, "axis"),
             "toolbox": _download_toolbox(),
-            "dataZoom": _datazoom(),
+            "dataZoom": _datazoom(x_unit=x_unit),
             "series": [{
                 "type": "line",
                 "xAxisIndex": 0,
@@ -525,61 +576,9 @@ def make_final_echarts(
         spectra_f = spectra_f[valid_rows]
     n_spectra, n_cols = spectra_f.shape
 
-    if color_by in ("density", "density_lines"):
-        _n_bins = n_bins if n_bins is not None else 200
-        effective_step = max(step, math.ceil(_n_bins * n_cols / 100_000))
-        x_s = x_f[::effective_step]
-        spectra_s = spectra_f[:, ::effective_step]
-        n_s = spectra_s.shape[1]
-
-        i_min, i_max = float(np.nanmin(spectra_s)), float(np.nanmax(spectra_s))
-        intensity_edges = np.linspace(i_min, i_max, _n_bins + 1)
-        intensity_centers = (intensity_edges[:-1] + intensity_edges[1:]) / 2
-
-        bin_indices = np.clip(np.digitize(spectra_s, intensity_edges) - 1, 0, _n_bins - 1)
-        flat = bin_indices * n_s + np.arange(n_s)
-        H = np.bincount(flat.ravel(), minlength=_n_bins * n_s).reshape(_n_bins, n_s)
-
-        data = [
-            [float(x_s[xi]), float(intensity_centers[bi]), int(H[bi, xi])]
-            for bi in range(_n_bins)
-            for xi in range(n_s)
-            if H[bi, xi] > 0
-        ]
-        counts = [d[2] for d in data]
-        vmax = max(2, int(np.percentile(counts, 99))) if counts else 2
-
-        return {
-            "title": _base_title(title),
-            "grid": _base_grid(right=130),
-            "xAxis": [x_primary, x_secondary],
-            "yAxis": [{**y_axis, "name": "intensity"}],
-            "visualMap": {
-                "type": "continuous",
-                "min": 1, "max": vmax,
-                "orient": "vertical",
-                "right": "2%", "top": "10%", "bottom": "20%",
-                "calculable": True,
-                "inRange": {"color": VIRIDIS},
-                "textStyle": {"fontSize": 18},
-                "text": ["high", "low"],
-            },
-            "series": [{
-                "type": "heatmap",
-                "coordinateSystem": "cartesian2d",
-                "xAxisIndex": 0,
-                "data": data,
-                "large": True,
-                "largeThreshold": 5000,
-            }],
-            "tooltip": _tooltip_x_with_ev(x_unit, "item"),
-            "toolbox": _download_toolbox(),
-            "dataZoom": _datazoom(),
-        }
-
     # index or mean_dev: one line per sampled spectrum
-    x_s = x_f[::step]
-    spectra_s = spectra_f[:, ::step]
+    x_s = x_f
+    spectra_s = spectra_f
 
     if n_spectra > MAX_INDEX_TRACES:
         idx_sample = np.linspace(0, n_spectra - 1, MAX_INDEX_TRACES, dtype=int)
@@ -645,7 +644,7 @@ def make_final_echarts(
         "legend": {"show": False},
         "tooltip": _tooltip_x_with_ev(x_unit, "axis"),
         "toolbox": _download_toolbox(),
-        "dataZoom": _datazoom(),
+        "dataZoom": _datazoom(x_unit=x_unit),
         "series": series,
     }
 
@@ -776,6 +775,153 @@ def make_nmf_diagnostic_echarts(
     }
 
 
+def make_mcr_scree_echarts(
+    rank: dict,
+    title: str = "SVD Scree — how many components?",
+) -> dict:
+    """Singular-value scree for MCR rank selection.
+
+    Bars are the singular values (how strongly each successive component
+    stands out); the line is cumulative variance. The user reads the rank off
+    the elbow — the point where bars drop into the flat noise floor — rather
+    than an automatic/hidden choice, exactly as with the NMF diagnostic. This
+    is a non-spectral chart, so it carries no x-unit selector (CLAUDE.md §5)."""
+    svals = list(rank["singular_values"])
+    cum = list(rank["cumulative_variance"])
+    idx = list(range(1, len(svals) + 1))
+
+    x_axis = {
+        "type": "category",
+        "data": idx,
+        "name": "component #",
+        "nameLocation": "middle",
+        "nameGap": 35,
+        "nameTextStyle": {"fontSize": FS_AXIS},
+        "axisLabel": {"fontSize": FS_TICK},
+    }
+    y_sval = {
+        "type": "value",
+        "name": "singular value",
+        "nameLocation": "middle",
+        "nameGap": 70,
+        "nameTextStyle": {"fontSize": FS_AXIS, "color": COLORS[0]},
+        "axisLabel": {"fontSize": FS_TICK, "color": COLORS[0]},
+        "splitLine": {"lineStyle": {"color": "#e0e0e0"}},
+    }
+    y_cum = {
+        "type": "value",
+        "name": "cumulative variance",
+        "nameLocation": "middle",
+        "nameGap": 50,
+        "nameTextStyle": {"fontSize": FS_AXIS, "color": COLORS[1]},
+        "axisLabel": {"fontSize": FS_TICK, "color": COLORS[1]},
+        "splitLine": {"show": False},
+        "min": 0, "max": 1,
+    }
+
+    tooltip_js = """function(params) {
+    if (!params || !params.length) return '';
+    var html = '<b>component ' + params[0].axisValue + '</b><br/>';
+    params.forEach(function(p) {
+        html += p.marker + ' ' + p.seriesName + ':&ensp;<b>' + p.value.toPrecision(4) + '</b><br/>';
+    });
+    return html;
+}"""
+
+    return {
+        "title": _base_title(title),
+        "grid": _base_grid(right=110),
+        "xAxis": [x_axis],
+        "yAxis": [y_sval, y_cum],
+        "legend": {
+            "type": "scroll", "orient": "horizontal", "bottom": 55,
+            "textStyle": {"fontSize": FS_LEGEND},
+        },
+        "tooltip": {"trigger": "axis", "formatter": JsCode(tooltip_js)},
+        "toolbox": _download_toolbox(),
+        "series": [
+            {
+                "type": "bar", "name": "singular value",
+                "xAxisIndex": 0, "yAxisIndex": 0,
+                "data": svals,
+                "itemStyle": {"color": COLORS[0]},
+            },
+            {
+                "type": "line", "name": "cumulative variance",
+                "xAxisIndex": 0, "yAxisIndex": 1,
+                "data": cum,
+                "lineStyle": {"color": COLORS[1], "width": 2},
+                "itemStyle": {"color": COLORS[1]},
+                "symbolSize": 8,
+            },
+        ],
+    }
+
+
+def make_mcr_ambiguity_echarts(
+    ambiguity: dict,
+    title: str = "Rotational Ambiguity (f_max − f_min)",
+) -> dict:
+    """Per-component ambiguity bars: the width of the feasible band each
+    component's relative signal contribution can span while still satisfying
+    non-negativity. Near-zero means the component is essentially uniquely
+    resolved; a wide bar means several equally-good solutions exist, so its
+    exact shape/amplitude should be treated with caution. Non-spectral chart
+    (no x-unit selector)."""
+    f_range = list(ambiguity["f_range"])
+    f_min = list(ambiguity["f_min"])
+    f_max = list(ambiguity["f_max"])
+    source = ambiguity.get("dominant_source", [""] * len(f_range))
+    idx = list(range(1, len(f_range) + 1))
+
+    data = [
+        {"value": (0.0 if r != r else float(r)),  # NaN -> 0 for display
+         "fmin": (None if fm != fm else float(fm)),
+         "fmax": (None if fx != fx else float(fx)),
+         "src": s}
+        for r, fm, fx, s in zip(f_range, f_min, f_max, source)
+    ]
+
+    tooltip_js = """function(params) {
+    var p = params[0];
+    var d = p.data;
+    var html = '<b>component ' + p.axisValue + '</b><br/>';
+    html += 'ambiguity (f_max − f_min):&ensp;<b>' + (d.value).toPrecision(3) + '</b><br/>';
+    if (d.fmin != null) html += 'f_min:&ensp;' + d.fmin.toPrecision(3) + '<br/>';
+    if (d.fmax != null) html += 'f_max:&ensp;' + d.fmax.toPrecision(3) + '<br/>';
+    if (d.src) html += 'ambiguity in:&ensp;<b>' + d.src + '</b>';
+    return html;
+}"""
+
+    return {
+        "title": _base_title(title),
+        "grid": _base_grid(right=40),
+        "xAxis": {
+            "type": "category", "data": idx,
+            "name": "component #", "nameLocation": "middle", "nameGap": 35,
+            "nameTextStyle": {"fontSize": FS_AXIS},
+            "axisLabel": {"fontSize": FS_TICK},
+        },
+        "yAxis": {
+            "type": "value", "name": "f_max − f_min",
+            "nameLocation": "middle", "nameGap": 60,
+            "nameTextStyle": {"fontSize": FS_AXIS},
+            "axisLabel": {"fontSize": FS_TICK},
+            "splitLine": {"lineStyle": {"color": "#e0e0e0"}},
+            "min": 0,
+        },
+        "tooltip": {"trigger": "axis", "formatter": JsCode(tooltip_js)},
+        "toolbox": _download_toolbox(),
+        "series": [
+            {
+                "type": "bar", "name": "ambiguity",
+                "data": data,
+                "itemStyle": {"color": COLORS[2]},
+            },
+        ],
+    }
+
+
 def make_deconv_fit_echarts(
     fit_result,
     spectral_dim: str,
@@ -854,6 +1000,61 @@ def make_deconv_fit_echarts(
         },
         "tooltip": _tooltip_with_ev(x_unit),
         "toolbox": _download_toolbox(),
-        "dataZoom": _datazoom(),
+        "dataZoom": _datazoom(x_unit=x_unit),
+        "series": series,
+    }
+
+
+def make_deconv_preview_echarts(
+    x_native: np.ndarray,
+    y: np.ndarray,
+    spectral_dim: str,
+    band_centers_native: list[float] | None = None,
+    title: str = "Peak Deconvolution",
+    x_unit: str = "wavelength",
+    laser_nm: float | None = None,
+    src_unit: str = "",
+    native_type: str = "",
+) -> dict:
+    """Raw target spectrum only (no fit yet) — for picking band positions by eye or
+    click before a first fit exists. Dashed vertical markLines show any band centers
+    already staged in the band table, built from the same axis/tooltip/toolbox
+    helpers make_deconv_fit_echarts uses.
+    """
+    x_disp = convert_x(
+        x_native, spectral_dim, x_unit, laser_nm,
+        src_unit=src_unit, native_type=native_type,
+    )
+    x_primary, x_secondary, y_axis = _make_axes(x_disp, x_unit, laser_nm)
+
+    series: list[dict] = [{
+        "type": "line", "name": "data",
+        "xAxisIndex": 0, "yAxisIndex": 0,
+        "data": list(zip(x_disp.tolist(), y.tolist())),
+        "lineStyle": {"color": "#888888", "width": 1.5},
+        "symbol": "none",
+    }]
+
+    if band_centers_native:
+        centers_disp = convert_x(
+            np.asarray(band_centers_native, dtype=float), spectral_dim, x_unit, laser_nm,
+            src_unit=src_unit, native_type=native_type,
+        )
+        series[0]["markLine"] = {
+            "silent": True, "symbol": "none",
+            "lineStyle": {"color": COLORS[0], "type": "dashed", "width": 1.5},
+            "label": {"show": False},
+            "data": [{"xAxis": float(c)} for c in centers_disp],
+        }
+
+    return {
+        "title": _base_title(title),
+        "grid": _base_grid(),
+        "xAxis": [x_primary, x_secondary],
+        "yAxis": [y_axis],
+        "legend": {"show": False},
+        "tooltip": _tooltip_with_ev(x_unit),
+        "toolbox": _download_toolbox(),
+        "dataZoom": _datazoom(x_unit=x_unit),
         "series": series,
     }

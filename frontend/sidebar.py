@@ -49,8 +49,13 @@ def render_sidebar() -> None:
         if st.button("Remove all files", width="stretch"):
             st.session_state["_sl_uploader_key"] += 1
             st.session_state.pop("sl_pipeline_params", None)
+            st.session_state.pop("sl_sample_structure", None)
+            st.session_state.pop("sl_bg_ui", None)
             for _key in (
                 "cd_enabled", "crr_enabled", "denoise_enabled", "norm_selection", "prog_title",
+                "bg_enabled", "bg_ref_source", "bg_ref_file",
+                "bg_row_min", "bg_row_max", "bg_col_min", "bg_col_max",
+                "bg_pt_ratio", "bg_c_override_on", "bg_c_override",
             ):
                 st.session_state.pop(_key, None)
             st.rerun()
