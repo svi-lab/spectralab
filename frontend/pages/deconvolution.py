@@ -24,9 +24,9 @@ from backend.peak_fitter import (
 from ..export_utils import batch_fit_to_npz, fit_curves_to_npz
 
 from ..charts import convert_x_to_native, make_deconv_fit_echarts, make_deconv_preview_echarts
-from ..controls import render_axis_controls
+from ..controls import render_axis_controls, render_map_display_controls
 from ..map_chart import make_scalar_map_fig
-from ..pipeline_cache import default_pipeline_params, get_finals
+from ..pipeline_cache import default_pipeline_params, final_da, get_finals
 
 _BAND_COLUMNS = ["label", "center_guess", "center_min", "center_max", "sigma_guess", "sigma_min", "sigma_max"]
 
@@ -211,7 +211,7 @@ def render_deconvolution_page() -> None:
 
     pipeline_params = st.session_state.get("sl_pipeline_params") or default_pipeline_params()
     with st.spinner("Preparing data…"):
-        _, all_finals, _errors = get_finals(loaded, pipeline_params)
+        all_datasets, _errors = get_finals(loaded, pipeline_params)
 
     left, right = st.columns([1, 2], gap="medium")
 
@@ -229,7 +229,7 @@ def render_deconvolution_page() -> None:
             st.info("Deconvolution is available for PL data only (Nanometer/ElectronVolt axes).")
         return
 
-    da_final = all_finals.get(file_name)
+    da_final = final_da(all_datasets.get(file_name))
     if da_final is None:
         with right:
             st.warning("Processing result not available for this file. Visit the Preprocessing page first.")
@@ -530,12 +530,14 @@ def render_deconvolution_page() -> None:
                 f"{batch_result.n_failed} failed fits"
             )
             labels = st.session_state.get("sl_deconv_batch_labels", list(batch_result.band_results.keys()))
-            c1, c2 = st.columns(2)
+            c1, c2, c3 = st.columns([1, 1, 2])
             band_label = c1.selectbox("Band", labels, key="deconv_batch_band_select")
             param_name = c2.selectbox(
                 "Parameter", ["center", "amplitude", "sigma", "fwhm", "area"],
                 key="deconv_batch_param_select",
             )
+            with c3:
+                colorscale, map_opacity = render_map_display_controls("deconv_map", inline=True)
             z = batch_result.band_results[band_label][param_name]
             row_coords = da_final.coords[spatial_dims[0]].values
             col_coords = da_final.coords[spatial_dims[1]].values
@@ -543,6 +545,7 @@ def render_deconvolution_page() -> None:
                 z, row_coords, col_coords, ds.image_arr, ds.image_meta,
                 cbar_label=f"{band_label} {param_name}",
                 title=f"{file_name} — {band_label} {param_name}",
+                colorscale=colorscale, map_opacity=map_opacity,
             )
             st.plotly_chart(fig, width="stretch", height=550)
             st.download_button(

@@ -1,0 +1,88 @@
+[data-testid="column"]:first-child { padding-right: 1rem; }
+
+/* --- Typography Tier 1: block / section titles --- */
+.section-header {
+    font-size: 0.95rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #555;
+    margin-top: 0.4rem;
+    margin-bottom: 0.2rem;
+}
+
+/* --- Typography Tier 3: metadata, file info --- */
+.info-box {
+    background: #f4f6fa;
+    border-radius: 6px;
+    padding: 0.45rem 0.7rem;
+    font-family: monospace;
+    font-size: 0.80rem;
+    line-height: 1.65;
+    margin-bottom: 0.4rem;
+}
+
+/* Light-budget table (Data page, Sample Structure card) — Tier 3 sizing */
+table.optics-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    border-radius: 6px;
+    background: #f4f6fa;
+    font-size: 0.80rem;
+    margin-bottom: 0.4rem;
+}
+table.optics-table th,
+table.optics-table td {
+    padding: 0.25rem 0.7rem;
+    text-align: right;
+    border: none;
+}
+table.optics-table th:first-child,
+table.optics-table td:first-child {
+    text-align: left;
+}
+table.optics-table th {
+    color: #555;
+    font-weight: 600;
+    border-bottom: 1px solid #e0e4ec;
+}
+
+.stExpander { border: 1px solid #e0e4ec !important; border-radius: 6px !important; }
+
+.st-key-remove_files button {
+    background-color: #fee2e2;
+    border-color: #fca5a5;
+    color: #991b1b;
+}
+.st-key-remove_files button:hover {
+    background-color: #fecaca;
+    border-color: #f87171;
+    color: #7f1d1d;
+}
+
+/* Step bar — Tier 1 typography to match section headers */
+div.st-key-step_bar a {
+    font-size: 0.95rem !important;
+    font-weight: 700 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+    border-radius: 6px;
+}
+
+/* Landing screen shown before any file is uploaded */
+.sl-hero {
+    text-align: center;
+    margin-top: 12vh;
+}
+.sl-hero-title {
+    font-size: 8rem !important;
+    font-weight: 800 !important;
+    letter-spacing: -0.02em;
+    margin-bottom: 0.5rem;
+    color: #1F2328;
+}
+.sl-hero-subtitle {
+    font-size: 1.15rem !important;
+    color: #6b6b6b;
+}

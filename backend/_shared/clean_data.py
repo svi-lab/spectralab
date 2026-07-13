@@ -78,7 +78,9 @@ class CleanData:
             da.transpose(*spatial_dims, sdim) if da.dims[-1] != sdim else da
         )
 
-        arr = np.asarray(da_sl, dtype=float)
+        # Detection only compares to zero — keep the reader's native dtype
+        # instead of forcing a full float64 copy of the whole array.
+        arr = np.asarray(da_sl)
         flat = arr.reshape(-1, arr.shape[-1])
         bad_mask = self._find_bad_rows(flat)
 
@@ -112,16 +114,27 @@ class CleanData:
 
     def _find_bad_rows(self, flat: np.ndarray) -> np.ndarray:
         """Return bool mask: True for rows with ``n_zeros``+ consecutive
-        zeros."""
+        zeros.
+
+        Vectorized: rows that don't even have ``n_zeros`` total zeros can't
+        possibly have a consecutive run that long, so they're filtered out
+        first (``candidates``). For the remaining rows, the windowed
+        consecutive-zero count is computed via a cumulative-sum difference
+        instead of a per-row ``np.convolve`` — exactly equivalent to the
+        sliding-window sum, just without the per-row Python loop.
+        """
         n = self.n_zeros
-        kernel = np.ones(n, dtype=np.int32)
+        is_zero = flat == 0
         bad = np.zeros(flat.shape[0], dtype=bool)
-        for i, row in enumerate(flat):
-            is_zero = (row == 0.0).astype(np.int32)
-            if is_zero.sum() < n:
-                continue  # fast path: not enough zeros at all
-            sums = np.convolve(is_zero, kernel, mode="valid")
-            bad[i] = bool(np.any(sums >= n))
+
+        candidates = is_zero.sum(axis=1) >= n
+        if not np.any(candidates):
+            return bad
+
+        cs = np.cumsum(is_zero[candidates], axis=1, dtype=np.int32)
+        win = cs[:, n - 1:].copy()
+        win[:, 1:] -= cs[:, :-n]
+        bad[candidates] = np.any(win >= n, axis=1)
         return bad
 
     # ------------------------------------------------------------------
@@ -240,7 +253,8 @@ class CleanData:
 
         # NaN-fill bad pixels in place; keep (ny, nx, n_channels) shape.
         # NaN signals "exclude from computation" to all downstream functions.
-        arr = np.array(da.values, dtype=float)
+        # dtype-preserving copy — any float dtype (float32/float64) holds NaN.
+        arr = np.array(da.values, dtype=da.dtype)
         flat = arr.reshape(-1, arr.shape[-1])
         flat[bad_idx] = np.nan
 
