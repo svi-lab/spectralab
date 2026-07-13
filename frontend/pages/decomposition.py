@@ -18,16 +18,21 @@ from ..charts import (
     make_mcr_scree_echarts,
     make_nmf_diagnostic_echarts,
 )
-from ..controls import render_axis_controls, render_mcr_params, render_nmf_params
+from ..controls import (
+    render_axis_controls,
+    render_map_display_controls,
+    render_mcr_params,
+    render_nmf_params,
+)
 from ..map_chart import make_scalar_map_fig
-from ..pipeline_cache import default_pipeline_params, get_finals
+from ..pipeline_cache import default_pipeline_params, final_da, get_finals
 
 
-def _resolve_reference_spectrum(all_finals, loaded, ref_file, target_x):
+def _resolve_reference_spectrum(all_datasets, loaded, ref_file, target_x):
     """Mean spectrum of ``ref_file`` (processed if available), resampled onto
     ``target_x`` and shifted to a baseline of 0 — ready to pin an MCR
     component to. Both files are PL, so their axes share units."""
-    da_ref = all_finals.get(ref_file)
+    da_ref = final_da(all_datasets.get(ref_file))
     if da_ref is None:
         da_ref = loaded[ref_file]["dataset"].da
     sdim = da_ref.dims[-1]
@@ -51,7 +56,7 @@ def render_decomposition_page() -> None:
 
     pipeline_params = st.session_state.get("sl_pipeline_params") or default_pipeline_params()
     with st.spinner("Preparing data…"):
-        _, all_finals, _errors = get_finals(loaded, pipeline_params)
+        all_datasets, _errors = get_finals(loaded, pipeline_params)
 
     map_candidates = {
         name: entry for name, entry in loaded.items()
@@ -83,7 +88,7 @@ def render_decomposition_page() -> None:
             st.info(msg)
         return
 
-    da_map = all_finals.get(map_name)
+    da_map = final_da(all_datasets.get(map_name))
     if da_map is None:
         with right:
             st.warning("Processing result not available for this file. Visit the Preprocessing page first.")
@@ -101,6 +106,7 @@ def render_decomposition_page() -> None:
             method = st.radio(
                 "Decomposition method",
                 ["MCR-ALS", "NMF"],
+                index=0,
                 key="decomp_method",
                 help=(
                     "**MCR-ALS** (recommended for PL): resolves physically "
@@ -114,7 +120,7 @@ def render_decomposition_page() -> None:
             )
 
     if method == "MCR-ALS":
-        _render_mcr(left, right, loaded, all_finals, da_map, ds, map_name,
+        _render_mcr(left, right, loaded, all_datasets, da_map, ds, map_name,
                     x_unit, laser_nm)
     else:
         _render_nmf(left, right, da_map, ds, map_name, x_unit, laser_nm)
@@ -123,7 +129,7 @@ def render_decomposition_page() -> None:
 # --------------------------------------------------------------------------- #
 # MCR-ALS
 # --------------------------------------------------------------------------- #
-def _render_mcr(left, right, loaded, all_finals, da_map, ds, map_name, x_unit, laser_nm):
+def _render_mcr(left, right, loaded, all_datasets, da_map, ds, map_name, x_unit, laser_nm):
     spectral_dim = da_map.dims[-1]
     target_x = da_map.coords[spectral_dim].values
 
@@ -173,7 +179,7 @@ def _render_mcr(left, right, loaded, all_finals, da_map, ds, map_name, x_unit, l
                         key="mcr_equality_index",
                     )
                     equality_spectrum = _resolve_reference_spectrum(
-                        all_finals, loaded, ref_file, target_x
+                        all_datasets, loaded, ref_file, target_x
                     )
 
             mcr_params = render_mcr_params()
@@ -268,11 +274,14 @@ def _render_mcr_results(mcr_result, ds, map_name, x_unit, laser_nm):
 
     with tab_maps:
         n_comp = mcr_result["components"].shape[0]
-        comp_idx = st.selectbox(
+        c_comp, c_display = st.columns([1, 2])
+        comp_idx = c_comp.selectbox(
             "Component", range(n_comp),
             format_func=lambda i: f"Component {i + 1}",
             key="mcr_map_component_select",
         )
+        with c_display:
+            colorscale, map_opacity = render_map_display_controls("mcr_map", inline=True)
         abundances = mcr_result["abundances"]
         z = abundances.isel(component=comp_idx).values
         row_coords = abundances.coords["row"].values
@@ -282,6 +291,7 @@ def _render_mcr_results(mcr_result, ds, map_name, x_unit, laser_nm):
             ds.image_arr, ds.image_meta,
             cbar_label=f"Component {comp_idx + 1} concentration",
             title=f"{map_name} — Component {comp_idx + 1}",
+            colorscale=colorscale, map_opacity=map_opacity,
         )
         st.plotly_chart(fig, width="stretch", height=550)
 
@@ -468,11 +478,14 @@ def _render_nmf(left, right, da_map, ds, map_name, x_unit, laser_nm):
 
             with tab_maps:
                 n_comp = nmf_result["components"].shape[0]
-                comp_idx = st.selectbox(
+                c_comp, c_display = st.columns([1, 2])
+                comp_idx = c_comp.selectbox(
                     "Component", range(n_comp),
                     format_func=lambda i: f"Component {i + 1}",
                     key="nmf_map_component_select",
                 )
+                with c_display:
+                    colorscale, map_opacity = render_map_display_controls("nmf_map", inline=True)
                 abundances = nmf_result["abundances"]
                 z = abundances.isel(component=comp_idx).values
                 row_coords = abundances.coords["row"].values
@@ -482,6 +495,7 @@ def _render_nmf(left, right, da_map, ds, map_name, x_unit, laser_nm):
                     ds.image_arr, ds.image_meta,
                     cbar_label=f"Component {comp_idx + 1} abundance",
                     title=f"{map_name} — Component {comp_idx + 1}",
+                    colorscale=colorscale, map_opacity=map_opacity,
                 )
                 st.plotly_chart(fig, width="stretch", height=550)
 

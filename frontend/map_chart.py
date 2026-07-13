@@ -106,7 +106,7 @@ def _add_image_overlay(
         x=ox, y=oy,
         sizex=fov_x, sizey=fov_y,
         xanchor="left", yanchor="top",
-        opacity=0.9, layer="above", sizing="stretch",
+        opacity=1.0, layer="below", sizing="stretch",
     )
 
 
@@ -145,6 +145,7 @@ def make_scalar_map_fig(
     colorscale: str = "Viridis",
     title: str = "",
     value_format: str = ".4g",
+    map_opacity: float = 0.75,
 ) -> go.Figure:
     """Heatmap of an arbitrary precomputed 2-D scalar overlaid on the
     white-light image — same rendering as :func:`make_map_fig`, but ``z``
@@ -168,12 +169,18 @@ def make_scalar_map_fig(
         figures, suitable for quantities of unknown scale (abundances,
         band centers, amplitudes); ``make_map_fig`` passes ``".3f"`` to
         keep its original fixed-decimal display unchanged.
+    map_opacity:
+        Opacity of the heatmap trace, drawn above the white-light image.
+        Ignored (forced to 1.0) when there is no image to blend with.
     """
+    if image_arr is None or image_meta is None:
+        map_opacity = 1.0
     fig = go.Figure()
     fig.add_trace(go.Heatmap(
         x=col_coords,
         y=row_coords,
         z=z,
+        opacity=map_opacity,
         colorscale=colorscale,
         colorbar=_colorbar(cbar_label),
         hovertemplate=(
@@ -197,6 +204,7 @@ def make_map_fig(
     colorscale: str = "Viridis",
     title: str = "",
     spectral_unit: str = "nm",
+    map_opacity: float = 0.75,
 ) -> go.Figure:
     """Heatmap of spectral quantity overlaid on the white-light image.
 
@@ -237,5 +245,5 @@ def make_map_fig(
     return make_scalar_map_fig(
         z, y_coords, x_coords, image_arr, image_meta,
         cbar_label=cbar_label, colorscale=colorscale, title=title,
-        value_format=".3f",
+        value_format=".3f", map_opacity=map_opacity,
     )

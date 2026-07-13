@@ -82,7 +82,10 @@ class BackgroundSuppressor:
         valid_idx = ~nan_row_mask
         valid_rows = row_stack[valid_idx]
 
-        ref = np.asarray(self.reference, dtype=float)
+        # dtype matches row_stack — a float64 reference would upcast the
+        # (n_spectra, n_channels) subtraction below even after c_before is
+        # cast correctly.
+        ref = np.asarray(self.reference, dtype=row_stack.dtype)
         if len(ref) != n_spectral:
             raise ValueError(
                 f"Reference length ({len(ref)}) != spectral channels ({n_spectral}). "
@@ -90,7 +93,8 @@ class BackgroundSuppressor:
             )
 
         # ── Fixed physics scale ───────────────────────────────────────────
-        c_before = np.full(valid_rows.shape[0], float(self.fixed_scale))
+        # dtype matches row_stack so the scalar doesn't upcast the subtraction.
+        c_before = np.full(valid_rows.shape[0], float(self.fixed_scale), dtype=row_stack.dtype)
 
         # ── Subtract and clip ─────────────────────────────────────────────
         corrected_valid = valid_rows - c_before[:, np.newaxis] * ref[np.newaxis, :]

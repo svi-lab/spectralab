@@ -38,39 +38,13 @@ _ZNO_AL: tuple[BandPreset, ...] = (
 )
 
 _TIO2: tuple[BandPreset, ...] = (
-    BandPreset(
-        "380 nm (3.26 eV)", 380, 3.26,
-        "NBE: free/self-trapped exciton recombination (intrinsic band-edge transition)",
-    ),
-    BandPreset(
-        "375 nm (3.31 eV)", 375, 3.31,
-        "Sharp excitonic line: defect-trapped exciton (shallow trap, X-ray-sensitive intensity)",
-        tentative=True,
-    ),
-    BandPreset(
-        "368 nm (3.37 eV)", 368, 3.37,
-        "Sharp excitonic line: defect-trapped exciton (shallow trap, X-ray-sensitive intensity)",
-        tentative=True,
-    ),
-    BandPreset(
-        "426 nm (2.91 eV)", 426, 2.91,
-        "Excitonic band: self-trapped exciton (anatase), TiO6 octahedron self-trapping",
-    ),
-    BandPreset(
-        "449 nm (2.76 eV)", 449, 2.76,
-        "Excitonic + phonon replicas: exciton recombination mediated by oxygen vacancies (V_O) "
-        "(literature range 441–457 nm / 2.71–2.81 eV)",
-    ),
-    BandPreset(
-        "510 nm (2.44 eV)", 510, 2.44,
-        "Green luminescence (G-PL): free e⁻ recombining with holes trapped at surface V_O, "
-        "(101)-facet related (literature range 500–520 nm / 2.40–2.48 eV)",
-    ),
-    BandPreset(
-        "610 nm (2.05 eV)", 610, 2.05,
-        "Red luminescence (R-PL): e⁻ trapped at under-coordinated Ti³⁺ sites recombining "
-        "with VB holes (literature range 600–620 nm / 2.00–2.10 eV)",
-    ),
+    BandPreset("380 nm (3.26 eV)", 380, 3.26, "CBM → VBM (NBE)"),
+    BandPreset("375 nm (3.31 eV)", 375, 3.31, "CB → Ti_i", tentative=True),
+    BandPreset("368 nm (3.37 eV)", 368, 3.37, "CB → V_O⁺", tentative=True),
+    BandPreset("426 nm (2.91 eV)", 426, 2.91, "CB → STE"),
+    BandPreset("449 nm (2.76 eV)", 449, 2.76, "CB → V_O"),
+    BandPreset("510 nm (2.44 eV)", 510, 2.44, "CB → V_O²⁺"),
+    BandPreset("610 nm (2.05 eV)", 610, 2.05, "Ti³⁺ → VB"),
 )
 
 PRESETS: dict[str, tuple[BandPreset, ...]] = {

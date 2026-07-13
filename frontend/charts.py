@@ -27,7 +27,16 @@ MULTI_COLORS = [
 VIRIDIS  = ["#440154", "#31688e", "#35b779", "#fde725"]
 PLASMA_R = ["#f0f921", "#fca636", "#e16462", "#b12a90", "#6a00a8", "#0d0887"]
 
-MAX_INDEX_TRACES = 500
+# Display-only column (spectral-axis) downsampling — analysis/exports always
+# use the full-resolution data; this only shrinks what gets serialized into
+# a chart's JSON payload (and, with it, what the browser has to render).
+MAX_POINTS_PER_TRACE = 1200
+
+# Safety ceiling on how many *spectra* (rows) get their own line in the Final
+# chart's index/mean_dev modes. Below this, every spectrum is drawn — no
+# silent dropping. Matches the existing >5000-spectra warning in
+# preprocessing.py.
+MAX_ROWS_DRAWN = 5000
 
 UNIT_LABELS = {
     "wavelength":  "wavelength (nm)",
@@ -372,6 +381,23 @@ def _apply_range_mask(
     return mask if mask.any() else np.ones(len(x_disp), dtype=bool)
 
 
+def _downsample_cols(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Downsample the spectral (last) axis to at most MAX_POINTS_PER_TRACE
+    points — display only, no-op when there are already that few channels.
+
+    ``y`` may be 1-D (single spectrum) or 2-D ``(n_spectra, n_channels)``;
+    the spectral axis is always last. Uses an evenly-spaced index (endpoints
+    included) rather than a fitting/binning method — cheap and sufficient
+    since ECharts' own "lttb" sampling still runs client-side on top of this
+    for the on-screen line.
+    """
+    n_cols = x.shape[-1]
+    if n_cols <= MAX_POINTS_PER_TRACE:
+        return x, y
+    idx = np.linspace(0, n_cols - 1, MAX_POINTS_PER_TRACE, dtype=int)
+    return x[idx], y[..., idx]
+
+
 def _sample_colorscale(hex_stops: list[str], values: list[float]) -> list[str]:
     """Linearly interpolate hex color stops at normalized float values in [0, 1]."""
     n = len(hex_stops) - 1
@@ -429,6 +455,7 @@ def make_progress_echarts(
         non_spectral = [d for d in da.dims if d != sd]
         mean_spec = da.mean(non_spectral) if non_spectral else da
         yv = mean_spec.values
+        xv_disp, yv = _downsample_cols(xv_disp, yv)
         color = COLORS[i % len(COLORS)]
         series.append({
             "type": "line",
@@ -459,6 +486,7 @@ def make_progress_echarts(
             end_value=x_range[1] if x_range else None,
             x_unit=x_unit,
         ),
+        "animation": False,
         "series": series,
     }
 
@@ -492,6 +520,7 @@ def make_comparison_echarts(
         non_spectral = [d for d in da.dims if d != sd]
         mean_spec = da.mean(non_spectral) if non_spectral else da
         yv = mean_spec.values
+        xv_disp, yv = _downsample_cols(xv_disp, yv)
         color = MULTI_COLORS[i % len(MULTI_COLORS)]
         series.append({
             "type": "line",
@@ -522,6 +551,7 @@ def make_comparison_echarts(
             end_value=x_range[1] if x_range else None,
             x_unit=x_unit,
         ),
+        "animation": False,
         "series": series,
     }
 
@@ -547,6 +577,7 @@ def make_final_echarts(
     x_primary, x_secondary, y_axis = _make_axes(x_f, x_unit, laser_nm)
 
     if da.ndim == 1:
+        x_disp, y_disp = _downsample_cols(x_f, da.values)
         return {
             "title": _base_title(title),
             "grid": _base_grid(),
@@ -556,10 +587,11 @@ def make_final_echarts(
             "tooltip": _tooltip_x_with_ev(x_unit, "axis"),
             "toolbox": _download_toolbox(),
             "dataZoom": _datazoom(x_unit=x_unit),
+            "animation": False,
             "series": [{
                 "type": "line",
                 "xAxisIndex": 0,
-                "data": list(zip(x_f.tolist(), da.values.tolist())),
+                "data": list(zip(x_disp.tolist(), y_disp.tolist())),
                 "lineStyle": {"color": COLORS[0], "width": 1.5},
                 "symbol": "none",
                 "sampling": "lttb",
@@ -567,7 +599,12 @@ def make_final_echarts(
             }],
         }
 
+    # Column (spectral-axis) downsampling first — display only, applies
+    # before any row handling below so both the NaN-drop and the mean_dev
+    # ranking work on the same (already-shrunk) column set.
     spectra = da.values.reshape(-1, da.shape[-1])
+    x_s, spectra = _downsample_cols(x_f, spectra)
+
     spectra_f = spectra
     # Drop dead-pixel rows (all-NaN from CleanData) — NaN is not valid JSON
     # and these rows carry no signal.
@@ -576,12 +613,13 @@ def make_final_echarts(
         spectra_f = spectra_f[valid_rows]
     n_spectra, n_cols = spectra_f.shape
 
-    # index or mean_dev: one line per sampled spectrum
-    x_s = x_f
+    # index or mean_dev: one line per spectrum — every spectrum is drawn
+    # unless the map is large enough to trip the MAX_ROWS_DRAWN safety
+    # ceiling (matches the >5000-spectra warning shown above this chart).
     spectra_s = spectra_f
 
-    if n_spectra > MAX_INDEX_TRACES:
-        idx_sample = np.linspace(0, n_spectra - 1, MAX_INDEX_TRACES, dtype=int)
+    if n_spectra > MAX_ROWS_DRAWN:
+        idx_sample = np.linspace(0, n_spectra - 1, MAX_ROWS_DRAWN, dtype=int)
     else:
         idx_sample = np.arange(n_spectra)
 
@@ -613,6 +651,11 @@ def make_final_echarts(
             "lineStyle": {"color": palette[i], "width": 1, "opacity": alpha},
             "symbol": "none",
             "sampling": "lttb",
+            # Renders the first chunk immediately and streams the rest —
+            # keeps first paint + scroll/zoom interaction smooth with
+            # hundreds of lines at ~1200 pts each (~960k pts total).
+            "progressive": 2000,
+            "progressiveThreshold": 100000,
         })
 
     N = len(series)
@@ -645,6 +688,7 @@ def make_final_echarts(
         "tooltip": _tooltip_x_with_ev(x_unit, "axis"),
         "toolbox": _download_toolbox(),
         "dataZoom": _datazoom(x_unit=x_unit),
+        "animation": False,
         "series": series,
     }
 

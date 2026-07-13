@@ -9,12 +9,15 @@ import streamlit as st
 from streamlit_echarts import st_echarts
 
 from backend._shared.dataset import SpectralDataset
-from backend.background._presets import (
-    list_materials,
-    list_temperatures,
-    list_thicknesses,
-    load_preset,
-)
+# Background suppression is currently disabled app-wide — these only feed
+# _resolve_reference / _render_physics_scale / render_bg_params below, all
+# commented out. Kept importable for a future re-enable.
+# from backend.background._presets import (
+#     list_materials,
+#     list_temperatures,
+#     list_thicknesses,
+#     load_preset,
+# )
 from ..charts import convert_x, make_comparison_echarts, make_final_echarts, make_progress_echarts
 import numpy as np
 
@@ -23,23 +26,23 @@ from ..controls import (
     X_UNIT_OPTIONS,
     UNIT_DEFAULT,
     render_axis_controls,
-    render_bg_params,
+    # render_bg_params,  # background suppression disabled app-wide
     render_clean_data_params,
     render_crr_params,
     render_denoising_params,
 )
-from ..pipeline_cache import get_finals
+from ..pipeline_cache import final_da, get_finals, stage_dict
 
 
 # Raw bg widget keys snapshotted to st.session_state["sl_bg_ui"] every rerun —
-# st.navigation clears widget keys on page switch; _restore_widget_state
-# reseeds them from that dict when the user returns to this page.
-_BG_WIDGET_KEYS = (
-    "bg_ref_source", "bg_ref_file", "bg_row_min", "bg_row_max",
-    "bg_col_min", "bg_col_max",
-    "bg_preset_material", "bg_preset_thickness", "bg_preset_temp",
-    "bg_pt_ratio", "bg_c_override_on", "bg_c_override",
-)
+# background suppression is currently disabled app-wide, so nothing reads
+# this. Kept for a future re-enable (see _restore_widget_state below).
+# _BG_WIDGET_KEYS = (
+#     "bg_ref_source", "bg_ref_file", "bg_row_min", "bg_row_max",
+#     "bg_col_min", "bg_col_max",
+#     "bg_preset_material", "bg_preset_thickness", "bg_preset_temp",
+#     "bg_pt_ratio", "bg_c_override_on", "bg_c_override",
+# )
 
 
 # ---------------------------------------------------------------------------
@@ -104,34 +107,37 @@ def _restore_widget_state() -> None:
             if wkey not in ss and pkey in crr:
                 ss[wkey] = crr[pkey]
 
-    # ── Background Suppression ────────────────────────────────────────────────
-    if "bg_enabled" not in ss:
-        ss["bg_enabled"] = stored.get("bg_enabled", False)
-    bg_ui = ss.get("sl_bg_ui") or {}
-    loaded_names = set(ss.get("sl_loaded") or {})
-    first_entry = next(iter((ss.get("sl_loaded") or {}).values()), None)
-    target_is_map = bool(first_entry and first_entry["dataset"].is_map)
-    for key, val in bg_ui.items():
-        if key in ss:
-            continue
-        # Skip values that would no longer be a valid widget option.
-        if key == "bg_ref_file" and val not in loaded_names:
-            continue
-        if key == "bg_ref_source" and "Map region" in str(val) and not target_is_map:
-            continue
-        if key == "bg_preset_material" and val not in list_materials():
-            continue
-        if key == "bg_preset_thickness":
-            material = bg_ui.get("bg_preset_material") or ss.get("bg_preset_material")
-            if material and val not in list_thicknesses(material):
-                continue
-        if key == "bg_preset_temp":
-            material = bg_ui.get("bg_preset_material") or ss.get("bg_preset_material")
-            thickness = bg_ui.get("bg_preset_thickness") or ss.get("bg_preset_thickness")
-            thickness_mm = int(thickness) if material == "glass" and thickness is not None else None
-            if material and val not in list_temperatures(material, thickness_mm):
-                continue
-        ss[key] = val
+    # Background suppression is currently disabled app-wide — no bg widgets
+    # are rendered, so there is nothing to restore. Kept for a future
+    # re-enable.
+#     # ── Background Suppression ────────────────────────────────────────────────
+#     if "bg_enabled" not in ss:
+#         ss["bg_enabled"] = stored.get("bg_enabled", False)
+#     bg_ui = ss.get("sl_bg_ui") or {}
+#     loaded_names = set(ss.get("sl_loaded") or {})
+#     first_entry = next(iter((ss.get("sl_loaded") or {}).values()), None)
+#     target_is_map = bool(first_entry and first_entry["dataset"].is_map)
+#     for key, val in bg_ui.items():
+#         if key in ss:
+#             continue
+#         # Skip values that would no longer be a valid widget option.
+#         if key == "bg_ref_file" and val not in loaded_names:
+#             continue
+#         if key == "bg_ref_source" and "Map region" in str(val) and not target_is_map:
+#             continue
+#         if key == "bg_preset_material" and val not in list_materials():
+#             continue
+#         if key == "bg_preset_thickness":
+#             material = bg_ui.get("bg_preset_material") or ss.get("bg_preset_material")
+#             if material and val not in list_thicknesses(material):
+#                 continue
+#         if key == "bg_preset_temp":
+#             material = bg_ui.get("bg_preset_material") or ss.get("bg_preset_material")
+#             thickness = bg_ui.get("bg_preset_thickness") or ss.get("bg_preset_thickness")
+#             thickness_mm = int(thickness) if material == "glass" and thickness is not None else None
+#             if material and val not in list_temperatures(material, thickness_mm):
+#                 continue
+#         ss[key] = val
 
     # ── Denoiser ──────────────────────────────────────────────────────────────
     if "denoise_enabled" not in ss:
@@ -180,185 +186,189 @@ def _restore_widget_state() -> None:
 # Left column: pipeline parameter widgets
 # ---------------------------------------------------------------------------
 
-def _resolve_reference(
-    bg_params: dict,
-    loaded: dict,
-    ds_name: str,
-    preprocessing_params: dict,
-) -> tuple[np.ndarray | None, np.ndarray | None, str | None]:
-    """Resolve the 1-D reference from bg_params["ref_params"].
+# Background suppression is currently disabled app-wide — _resolve_reference
+# and _render_physics_scale below are unused (only called from the commented
+# Background Suppression block in _render_preprocessing_params). Kept for a
+# future re-enable.
+# def _resolve_reference(
+#     bg_params: dict,
+#     loaded: dict,
+#     ds_name: str,
+#     preprocessing_params: dict,
+# ) -> tuple[np.ndarray | None, np.ndarray | None, str | None]:
+#     """Resolve the 1-D reference from bg_params["ref_params"].
+# 
+#     preprocessing_params must have bg_enabled=False — it describes all pipeline
+#     stages *except* background suppression, so the reference gets the same CRR
+#     / denoising treatment as the main data before the subtraction.
+# 
+#     Returns (ref_y, ref_x, error_message).
+#     ref_x is None when ref and data share the same spectral axis (map region).
+#     """
+#     ref_p = bg_params.get("ref_params", {})
+#     source = ref_p.get("source", "")
+# 
+#     if source == "Loaded file (mean)":
+#         ref_name = ref_p.get("ref_file")
+#         if not ref_name or ref_name not in loaded:
+#             return None, None, "Reference file not found in loaded files."
+# 
+#         # Process the reference file through the same pipeline stages as the main
+#         # data (CRR, denoising, etc.) so we're subtracting like from like.
+#         ref_datasets, ref_errors = get_finals({ref_name: loaded[ref_name]}, preprocessing_params)
+#         if ref_errors:
+#             return None, None, f"Failed to preprocess reference: {ref_errors[0]}"
+# 
+#         ref_da = final_da(ref_datasets[ref_name])
+#         spectral_dim = loaded[ref_name]["dataset"].spectral_dim
+#         ref_x = ref_da.coords[spectral_dim].values
+#         non_spectral = [d for d in ref_da.dims if d != spectral_dim]
+#         ref_y = np.nanmean(ref_da.values, axis=tuple(range(len(non_spectral)))) if non_spectral else ref_da.values.copy()
+# 
+#         if np.all(np.isnan(ref_y)):
+#             return None, None, "Reference file has all-NaN spectra after preprocessing."
+#         return ref_y, ref_x, None
+# 
+#     elif "Map region" in source:
+#         ds = loaded[ds_name]["dataset"]
+#         if not ds.is_map:
+#             return None, None, "Map region reference requires a map dataset."
+#         row_min = ref_p.get("row_min", 0)
+#         row_max = ref_p.get("row_max", 0)
+#         col_min = ref_p.get("col_min", 0)
+#         col_max = ref_p.get("col_max", 0)
+# 
+#         # Extract the region from the preprocessed map (same stages as main data).
+#         main_datasets, main_errors = get_finals({ds_name: loaded[ds_name]}, preprocessing_params)
+#         if main_errors:
+#             return None, None, f"Failed to preprocess map for region extraction: {main_errors[0]}"
+# 
+#         da = final_da(main_datasets[ds_name])
+#         try:
+#             region = da.isel({da.dims[0]: slice(row_min, row_max + 1),
+#                               da.dims[1]: slice(col_min, col_max + 1)})
+#         except Exception as e:
+#             return None, None, f"Invalid map region: {e}"
+#         ref_y = np.nanmean(region.values.reshape(-1, region.shape[-1]), axis=0)
+#         if np.all(np.isnan(ref_y)):
+#             return None, None, "Selected map region is all-NaN."
+#         return ref_y, None, None
+# 
+#     elif source == "Built-in preset":
+#         preset_key = ref_p.get("preset_key")
+#         if not preset_key:
+#             return None, None, "No built-in preset selected."
+#         try:
+#             ref_x, ref_y, _meta = load_preset(preset_key)
+#         except (FileNotFoundError, KeyError) as e:
+#             return None, None, f"Failed to load preset: {e}"
+#         if np.all(np.isnan(ref_y)):
+#             return None, None, "Selected preset is all-NaN."
+#         return ref_y, ref_x, None
+# 
+#     return None, None, "Unknown reference source."
 
-    preprocessing_params must have bg_enabled=False — it describes all pipeline
-    stages *except* background suppression, so the reference gets the same CRR
-    / denoising treatment as the main data before the subtraction.
 
-    Returns (ref_y, ref_x, error_message).
-    ref_x is None when ref and data share the same spectral axis (map region).
-    """
-    ref_p = bg_params.get("ref_params", {})
-    source = ref_p.get("source", "")
-
-    if source == "Loaded file (mean)":
-        ref_name = ref_p.get("ref_file")
-        if not ref_name or ref_name not in loaded:
-            return None, None, "Reference file not found in loaded files."
-
-        # Process the reference file through the same pipeline stages as the main
-        # data (CRR, denoising, etc.) so we're subtracting like from like.
-        _, ref_finals, ref_errors = get_finals({ref_name: loaded[ref_name]}, preprocessing_params)
-        if ref_errors:
-            return None, None, f"Failed to preprocess reference: {ref_errors[0]}"
-
-        ref_da = ref_finals[ref_name]
-        spectral_dim = loaded[ref_name]["dataset"].spectral_dim
-        ref_x = ref_da.coords[spectral_dim].values
-        non_spectral = [d for d in ref_da.dims if d != spectral_dim]
-        ref_y = np.nanmean(ref_da.values, axis=tuple(range(len(non_spectral)))) if non_spectral else ref_da.values.copy()
-
-        if np.all(np.isnan(ref_y)):
-            return None, None, "Reference file has all-NaN spectra after preprocessing."
-        return ref_y, ref_x, None
-
-    elif "Map region" in source:
-        ds = loaded[ds_name]["dataset"]
-        if not ds.is_map:
-            return None, None, "Map region reference requires a map dataset."
-        row_min = ref_p.get("row_min", 0)
-        row_max = ref_p.get("row_max", 0)
-        col_min = ref_p.get("col_min", 0)
-        col_max = ref_p.get("col_max", 0)
-
-        # Extract the region from the preprocessed map (same stages as main data).
-        _, main_finals, main_errors = get_finals({ds_name: loaded[ds_name]}, preprocessing_params)
-        if main_errors:
-            return None, None, f"Failed to preprocess map for region extraction: {main_errors[0]}"
-
-        da = main_finals[ds_name]
-        try:
-            region = da.isel({da.dims[0]: slice(row_min, row_max + 1),
-                              da.dims[1]: slice(col_min, col_max + 1)})
-        except Exception as e:
-            return None, None, f"Invalid map region: {e}"
-        ref_y = np.nanmean(region.values.reshape(-1, region.shape[-1]), axis=0)
-        if np.all(np.isnan(ref_y)):
-            return None, None, "Selected map region is all-NaN."
-        return ref_y, None, None
-
-    elif source == "Built-in preset":
-        preset_key = ref_p.get("preset_key")
-        if not preset_key:
-            return None, None, "No built-in preset selected."
-        try:
-            ref_x, ref_y, _meta = load_preset(preset_key)
-        except (FileNotFoundError, KeyError) as e:
-            return None, None, f"Failed to load preset: {e}"
-        if np.all(np.isnan(ref_y)):
-            return None, None, "Selected preset is all-NaN."
-        return ref_y, ref_x, None
-
-    return None, None, "Unknown reference source."
-
-
-def _render_physics_scale(bg_params_raw: dict, loaded: dict, ds_name: str) -> float | None:
-    """Resolve the physics-mode scale c_total = c_physics × (P·t)_sample/(P·t)_ref.
-
-    c_physics is read from the Data page's Sample Structure summary (the single
-    source of truth) — no optics calls happen here. Renders the factor
-    breakdown, a manual ratio input when power/exposure metadata is missing,
-    and a manual override for the final c. Returns None when the structure is
-    missing or the file is marked as a bare substrate — the caller disables
-    the stage in that case.
-    """
-    ss_info = st.session_state.get("sl_sample_structure", {}).get(ds_name)
-    if ss_info and ss_info.get("sample_type") == "substrate":
-        st.error(
-            f"**{ds_name}** is marked as a bare substrate on the Data page — "
-            "there is no film to suppress under. Fix the sample type or "
-            "process the film file instead."
-        )
-        return None
-    summary = (ss_info or {}).get("summary") or {}
-    if "c_physics" not in summary:
-        st.error(
-            "Physics mode needs the film and substrate parameters — "
-            "fill in **Sample Structure** on the Data page."
-        )
-        return None
-
-    c_optical = float(summary["c_physics"])
-
-    # ── Power × exposure ratio between sample and reference ──────────────
-    source = bg_params_raw.get("ref_params", {}).get("source", "")
-    if "Map region" in source:
-        ratio = 1.0
-        ratio_note = "same file → ratio = 1"
-    elif source == "Built-in preset":
-        preset_key = bg_params_raw.get("ref_params", {}).get("preset_key")
-        tgt = loaded[ds_name]["dataset"]
-        pt_y = tgt.laser_power * tgt.exposure_time
-        try:
-            _ref_x, _ref_y, preset_meta = load_preset(preset_key)
-            pt_r = preset_meta["laser_power"] * preset_meta["exposure_time"]
-        except (FileNotFoundError, KeyError, TypeError):
-            pt_r = float("nan")
-        if np.isfinite(pt_y) and np.isfinite(pt_r) and pt_r > 0:
-            ratio = pt_y / pt_r
-            ratio_note = (
-                f"(P·t)ₛ {tgt.laser_power:g}×{tgt.exposure_time:g} / "
-                f"(P·t)preset {preset_meta['laser_power']:g}×{preset_meta['exposure_time']:g}"
-            )
-        else:
-            ratio = float(st.number_input(
-                "Power × exposure ratio (sample / reference)",
-                value=1.0, min_value=0.0, step=0.1, format="%.3f",
-                key="bg_pt_ratio",
-                help=(
-                    "Laser power or exposure time is missing from the file "
-                    "metadata — enter (P_sample·t_sample)/(P_ref·t_ref) manually. "
-                    "1.0 = identical acquisition conditions."
-                ),
-            ))
-            ratio_note = "metadata missing — manual"
-    else:
-        tgt = loaded[ds_name]["dataset"]
-        ref_name = bg_params_raw.get("ref_params", {}).get("ref_file")
-        rds = loaded[ref_name]["dataset"] if ref_name in loaded else None
-        pt_y = tgt.laser_power * tgt.exposure_time
-        pt_r = (rds.laser_power * rds.exposure_time) if rds is not None else float("nan")
-        if np.isfinite(pt_y) and np.isfinite(pt_r) and pt_r > 0:
-            ratio = pt_y / pt_r
-            ratio_note = (
-                f"(P·t)ₛ {tgt.laser_power:g}×{tgt.exposure_time:g} / "
-                f"(P·t)ᵣ {rds.laser_power:g}×{rds.exposure_time:g}"
-            )
-        else:
-            ratio = float(st.number_input(
-                "Power × exposure ratio (sample / reference)",
-                value=1.0, min_value=0.0, step=0.1, format="%.3f",
-                key="bg_pt_ratio",
-                help=(
-                    "Laser power or exposure time is missing from the file "
-                    "metadata — enter (P_sample·t_sample)/(P_ref·t_ref) manually. "
-                    "1.0 = identical acquisition conditions."
-                ),
-            ))
-            ratio_note = "metadata missing — manual"
-
-    c_total = c_optical * ratio
-    st.caption(
-        f"c = T→sub {summary['tmm_T_sub']:.3f} / (1−R_ref) {1.0 - summary['R_air_sub']:.3f} "
-        f"× power {ratio:.3f} ({ratio_note}) "
-        f"= **{c_total:.4f}**. "
-        "Assumes PL scales linearly with excitation power."
-    )
-
-    # ── Manual override ───────────────────────────────────────────────────
-    if st.checkbox("Override c manually", key="bg_c_override_on"):
-        c_total = float(st.number_input(
-            "Scale c", min_value=0.0, value=float(c_total), step=0.01,
-            format="%.4f", key="bg_c_override",
-        ))
-    return c_total
+# def _render_physics_scale(bg_params_raw: dict, loaded: dict, ds_name: str) -> float | None:
+#     """Resolve the physics-mode scale c_total = c_physics × (P·t)_sample/(P·t)_ref.
+# 
+#     c_physics is read from the Data page's Sample Structure summary (the single
+#     source of truth) — no optics calls happen here. Renders the factor
+#     breakdown, a manual ratio input when power/exposure metadata is missing,
+#     and a manual override for the final c. Returns None when the structure is
+#     missing or the file is marked as a bare substrate — the caller disables
+#     the stage in that case.
+#     """
+#     ss_info = st.session_state.get("sl_sample_structure", {}).get(ds_name)
+#     if ss_info and ss_info.get("sample_type") == "substrate":
+#         st.error(
+#             f"**{ds_name}** is marked as a bare substrate on the Data page — "
+#             "there is no film to suppress under. Fix the sample type or "
+#             "process the film file instead."
+#         )
+#         return None
+#     summary = (ss_info or {}).get("summary") or {}
+#     if "c_physics" not in summary:
+#         st.error(
+#             "Physics mode needs the film and substrate parameters — "
+#             "fill in **Sample Structure** on the Data page."
+#         )
+#         return None
+# 
+#     c_optical = float(summary["c_physics"])
+# 
+#     # ── Power × exposure ratio between sample and reference ──────────────
+#     source = bg_params_raw.get("ref_params", {}).get("source", "")
+#     if "Map region" in source:
+#         ratio = 1.0
+#         ratio_note = "same file → ratio = 1"
+#     elif source == "Built-in preset":
+#         preset_key = bg_params_raw.get("ref_params", {}).get("preset_key")
+#         tgt = loaded[ds_name]["dataset"]
+#         pt_y = tgt.laser_power * tgt.exposure_time
+#         try:
+#             _ref_x, _ref_y, preset_meta = load_preset(preset_key)
+#             pt_r = preset_meta["laser_power"] * preset_meta["exposure_time"]
+#         except (FileNotFoundError, KeyError, TypeError):
+#             pt_r = float("nan")
+#         if np.isfinite(pt_y) and np.isfinite(pt_r) and pt_r > 0:
+#             ratio = pt_y / pt_r
+#             ratio_note = (
+#                 f"(P·t)ₛ {tgt.laser_power:g}×{tgt.exposure_time:g} / "
+#                 f"(P·t)preset {preset_meta['laser_power']:g}×{preset_meta['exposure_time']:g}"
+#             )
+#         else:
+#             ratio = float(st.number_input(
+#                 "Power × exposure ratio (sample / reference)",
+#                 value=1.0, min_value=0.0, step=0.1, format="%.3f",
+#                 key="bg_pt_ratio",
+#                 help=(
+#                     "Laser power or exposure time is missing from the file "
+#                     "metadata — enter (P_sample·t_sample)/(P_ref·t_ref) manually. "
+#                     "1.0 = identical acquisition conditions."
+#                 ),
+#             ))
+#             ratio_note = "metadata missing — manual"
+#     else:
+#         tgt = loaded[ds_name]["dataset"]
+#         ref_name = bg_params_raw.get("ref_params", {}).get("ref_file")
+#         rds = loaded[ref_name]["dataset"] if ref_name in loaded else None
+#         pt_y = tgt.laser_power * tgt.exposure_time
+#         pt_r = (rds.laser_power * rds.exposure_time) if rds is not None else float("nan")
+#         if np.isfinite(pt_y) and np.isfinite(pt_r) and pt_r > 0:
+#             ratio = pt_y / pt_r
+#             ratio_note = (
+#                 f"(P·t)ₛ {tgt.laser_power:g}×{tgt.exposure_time:g} / "
+#                 f"(P·t)ᵣ {rds.laser_power:g}×{rds.exposure_time:g}"
+#             )
+#         else:
+#             ratio = float(st.number_input(
+#                 "Power × exposure ratio (sample / reference)",
+#                 value=1.0, min_value=0.0, step=0.1, format="%.3f",
+#                 key="bg_pt_ratio",
+#                 help=(
+#                     "Laser power or exposure time is missing from the file "
+#                     "metadata — enter (P_sample·t_sample)/(P_ref·t_ref) manually. "
+#                     "1.0 = identical acquisition conditions."
+#                 ),
+#             ))
+#             ratio_note = "metadata missing — manual"
+# 
+#     c_total = c_optical * ratio
+#     st.caption(
+#         f"c = T→sub {summary['tmm_T_sub']:.3f} / (1−R_ref) {1.0 - summary['R_air_sub']:.3f} "
+#         f"× power {ratio:.3f} ({ratio_note}) "
+#         f"= **{c_total:.4f}**. "
+#         "Assumes PL scales linearly with excitation power."
+#     )
+# 
+#     # ── Manual override ───────────────────────────────────────────────────
+#     if st.checkbox("Override c manually", key="bg_c_override_on"):
+#         c_total = float(st.number_input(
+#             "Scale c", min_value=0.0, value=float(c_total), step=0.01,
+#             format="%.4f", key="bg_c_override",
+#         ))
+#     return c_total
 
 
 def _render_preprocessing_params(processing_ok: bool, loaded: dict, ds_name: str) -> dict[str, Any]:
@@ -463,81 +473,84 @@ def _render_preprocessing_params(processing_ok: bool, loaded: dict, ds_name: str
     bg_params_raw: dict[str, Any] = {}
     bg_pipeline: dict[str, Any] = {}
 
-    # Pipeline params for all stages above (used to preprocess the reference
-    # with the same CRR/denoising before the subtraction).
-    _ns_pre = norm_selection or []
-    _nm_pre = {"method": norm_method} if norm_method else {}
-    _intermediate_params: dict[str, Any] = {
-        "norm1_enabled":   "Before" in _ns_pre,        "norm1":   _nm_pre,
-        "cd_enabled":      cd_enabled,                 "cd":      cd_params,
-        "crr_enabled":     crr_enabled,                "crr":     crr_params,
-        "norm2_enabled":   "After CRR" in _ns_pre,     "norm2":   _nm_pre,
-        "denoise_enabled": denoise_enabled,            "denoise": denoise_params,
-        "norm3_enabled":   "After Denoising" in _ns_pre, "norm3": _nm_pre,
-        "bg_enabled":      False,                      "bg":      {},
-    }
-
-    with st.container(border=True):
-        st.markdown('<p class="section-header">Background Suppression</p>', unsafe_allow_html=True)
-        bg_enabled = st.toggle(
-            "Subtract substrate reference",
-            key="bg_enabled",
-            help=(
-                "Subtracts a scaled bare-substrate spectrum from each spectrum: "
-                "**corrected = measured − c · reference**.\n\n"
-                "Scale factor c comes from the optical model (Sample Structure "
-                "on the Data page), scaled by the laser-power × exposure ratio "
-                "between sample and reference. Normalization is applied "
-                "*after* the subtraction."
-            ),
-        )
-        if bg_enabled:
-            ref_ds = loaded[ds_name]["dataset"]
-            bg_params_raw = render_bg_params(loaded, ds_name, ref_ds.is_map)
-
-            if not bg_params_raw.get("valid", False):
-                bg_enabled = False
-            else:
-
-                # Suppression always runs in un-normalized space,
-                # so the reference skips the normalization stages too — the
-                # pipeline defers them until after the subtraction.
-                ref_pre_params = {
-                    **_intermediate_params,
-                    "norm1_enabled": False, "norm2_enabled": False, "norm3_enabled": False,
-                }
-
-                ref_y, ref_x, ref_err = _resolve_reference(bg_params_raw, loaded, ds_name, ref_pre_params)
-                if ref_err:
-                    st.error(f"Reference error: {ref_err}")
-                    bg_enabled = False
-                else:
-                    if norm_selection:
-                        st.info(
-                            "Your normalization runs **after** the subtraction — "
-                            "the suppression always operates on un-normalized "
-                            "spectra. See the 'Normalized (post-suppression)' "
-                            "stage in the Progress tab."
-                        )
-
-                    c_total = _render_physics_scale(bg_params_raw, loaded, ds_name)
-                    if c_total is None:
-                        bg_enabled = False
-                    else:
-                        bg_pipeline = {
-                            "reference":   ref_y,
-                            "reference_x": ref_x,
-                            "scale_mode":  "physics",
-                            "fixed_scale": float(c_total),
-                        }
-
-        # Snapshot raw bg widget values for cross-page persistence (see
-        # _BG_WIDGET_KEYS / _restore_widget_state).
-        _bg_ui_prev = st.session_state.get("sl_bg_ui") or {}
-        st.session_state["sl_bg_ui"] = {
-            **_bg_ui_prev,
-            **{k: st.session_state[k] for k in _BG_WIDGET_KEYS if k in st.session_state},
-        }
+    # Background suppression is currently disabled app-wide — no controls
+    # are rendered, so bg_enabled/bg_params_raw/bg_pipeline stay at the
+    # defaults above. Kept for a future re-enable.
+#     # Pipeline params for all stages above (used to preprocess the reference
+#     # with the same CRR/denoising before the subtraction).
+#     _ns_pre = norm_selection or []
+#     _nm_pre = {"method": norm_method} if norm_method else {}
+#     _intermediate_params: dict[str, Any] = {
+#         "norm1_enabled":   "Before" in _ns_pre,        "norm1":   _nm_pre,
+#         "cd_enabled":      cd_enabled,                 "cd":      cd_params,
+#         "crr_enabled":     crr_enabled,                "crr":     crr_params,
+#         "norm2_enabled":   "After CRR" in _ns_pre,     "norm2":   _nm_pre,
+#         "denoise_enabled": denoise_enabled,            "denoise": denoise_params,
+#         "norm3_enabled":   "After Denoising" in _ns_pre, "norm3": _nm_pre,
+#         "bg_enabled":      False,                      "bg":      {},
+#     }
+# 
+#     with st.container(border=True):
+#         st.markdown('<p class="section-header">Background Suppression</p>', unsafe_allow_html=True)
+#         bg_enabled = st.toggle(
+#             "Subtract substrate reference",
+#             key="bg_enabled",
+#             help=(
+#                 "Subtracts a scaled bare-substrate spectrum from each spectrum: "
+#                 "**corrected = measured − c · reference**.\n\n"
+#                 "Scale factor c comes from the optical model (Sample Structure "
+#                 "on the Data page), scaled by the laser-power × exposure ratio "
+#                 "between sample and reference. Normalization is applied "
+#                 "*after* the subtraction."
+#             ),
+#         )
+#         if bg_enabled:
+#             ref_ds = loaded[ds_name]["dataset"]
+#             bg_params_raw = render_bg_params(loaded, ds_name, ref_ds.is_map)
+# 
+#             if not bg_params_raw.get("valid", False):
+#                 bg_enabled = False
+#             else:
+# 
+#                 # Suppression always runs in un-normalized space,
+#                 # so the reference skips the normalization stages too — the
+#                 # pipeline defers them until after the subtraction.
+#                 ref_pre_params = {
+#                     **_intermediate_params,
+#                     "norm1_enabled": False, "norm2_enabled": False, "norm3_enabled": False,
+#                 }
+# 
+#                 ref_y, ref_x, ref_err = _resolve_reference(bg_params_raw, loaded, ds_name, ref_pre_params)
+#                 if ref_err:
+#                     st.error(f"Reference error: {ref_err}")
+#                     bg_enabled = False
+#                 else:
+#                     if norm_selection:
+#                         st.info(
+#                             "Your normalization runs **after** the subtraction — "
+#                             "the suppression always operates on un-normalized "
+#                             "spectra. See the 'Normalized (post-suppression)' "
+#                             "stage in the Progress tab."
+#                         )
+# 
+#                     c_total = _render_physics_scale(bg_params_raw, loaded, ds_name)
+#                     if c_total is None:
+#                         bg_enabled = False
+#                     else:
+#                         bg_pipeline = {
+#                             "reference":   ref_y,
+#                             "reference_x": ref_x,
+#                             "scale_mode":  "physics",
+#                             "fixed_scale": float(c_total),
+#                         }
+# 
+#         # Snapshot raw bg widget values for cross-page persistence (see
+#         # _BG_WIDGET_KEYS / _restore_widget_state).
+#         _bg_ui_prev = st.session_state.get("sl_bg_ui") or {}
+#         st.session_state["sl_bg_ui"] = {
+#             **_bg_ui_prev,
+#             **{k: st.session_state[k] for k in _BG_WIDGET_KEYS if k in st.session_state},
+#         }
 
     # ── Assemble and return pipeline_params ───────────────────────────────────
     _ns = norm_selection or []
@@ -567,9 +580,10 @@ def _render_preprocessing_params(processing_ok: bool, loaded: dict, ds_name: str
 def _run_preprocessing(
     loaded: dict[str, Any],
     pipeline_params: dict[str, Any],
-) -> tuple[dict, dict, list[str]]:
+) -> tuple[dict, list[str]]:
     with st.spinner(f"Processing {len(loaded)} file(s)…"):
-        return get_finals(loaded, pipeline_params)
+        # keep_stages: the Progress tab is the one consumer of intermediates.
+        return get_finals(loaded, pipeline_params, keep_stages=True)
 
 
 @st.cache_data(show_spinner=False, max_entries=16)
@@ -591,8 +605,7 @@ def _make_final_echarts_cached(
 
 
 def _render_progress_tab(
-    all_stages: dict,
-    all_finals: dict,
+    all_datasets: dict,
     loaded: dict[str, Any],
     pipeline_params: dict[str, Any],
     multi: bool,
@@ -645,21 +658,22 @@ def _render_progress_tab(
 
     x_range = (min(x_from, x_to), max(x_from, x_to))
 
-    default_title = next(iter(all_stages)) if not multi else "Final spectra — all files"
+    default_title = next(iter(all_datasets)) if not multi else "Final spectra — all files"
     with col_title:
         chart_title = st.text_input("Chart title", value=default_title, key="prog_title")
 
     if multi:
+        finals = {name: final_da(ds) for name, ds in all_datasets.items()}
         opts = make_comparison_echarts(
-            all_finals, title=chart_title,
+            finals, title=chart_title,
             x_unit=x_unit, laser_nm=laser,
             src_unit=ref_ds.spectral_unit, native_type=ref_ds.spectral_units,
             x_range=x_range,
         )
     else:
-        name = next(iter(all_stages))
+        name = next(iter(all_datasets))
         opts = make_progress_echarts(
-            all_stages[name], title=chart_title,
+            stage_dict(all_datasets[name]), title=chart_title,
             x_unit=x_unit, laser_nm=laser,
             src_unit=ref_ds.spectral_unit, native_type=ref_ds.spectral_units,
             x_range=x_range,
@@ -669,7 +683,7 @@ def _render_progress_tab(
 
 
 def _render_final_tab(
-    all_finals: dict,
+    all_datasets: dict,
     loaded: dict[str, Any],
     pipeline_params: dict[str, Any],
     multi: bool,
@@ -690,9 +704,10 @@ def _render_final_tab(
             ref_ds.laser_nm,
             native_type=ref_ds.spectral_units,
         )
+        finals = {name: final_da(ds) for name, ds in all_datasets.items()}
         st_echarts(
             make_comparison_echarts(
-                all_finals, title=chart_title,
+                finals, title=chart_title,
                 x_unit=x_unit, laser_nm=laser,
                 src_unit=ref_ds.spectral_unit, native_type=ref_ds.spectral_units,
             ),
@@ -702,19 +717,21 @@ def _render_final_tab(
     else:
         if multi:
             selected = st.selectbox(
-                "Select file", list(all_finals.keys()), key="final_file_select"
+                "Select file", list(all_datasets.keys()), key="final_file_select"
             )
         else:
-            selected = next(iter(all_finals))
+            selected = next(iter(all_datasets))
 
         sel_ds: SpectralDataset = loaded[selected]["dataset"]
-        da_sel = all_finals[selected]
+        da_sel = final_da(all_datasets[selected])
 
         n_spectra = int(da_sel.size // da_sel.shape[-1]) if da_sel.ndim > 1 else 1
         if n_spectra > 5000:
             st.warning(
                 f"Large dataset ({n_spectra} spectra). "
-                "Only a subset of spectra is drawn in index mode.",
+                "Only a subset of spectra is drawn in index mode "
+                "(display is also downsampled to ~1,200 points/spectrum along "
+                "the spectral axis). Exports and analysis stay full-resolution.",
                 icon="⚠️",
             )
 
@@ -747,8 +764,7 @@ def _render_final_tab(
 
 @st.fragment
 def _render_charts_fragment(
-    all_stages: dict,
-    all_finals: dict,
+    all_datasets: dict,
     loaded: dict[str, Any],
     pipeline_params: dict[str, Any],
     multi: bool,
@@ -762,9 +778,9 @@ def _render_charts_fragment(
     """
     tab_prog, tab_final = st.tabs(["Preprocessing", "Final"])
     with tab_prog:
-        _render_progress_tab(all_stages, all_finals, loaded, pipeline_params, multi, ref_ds)
+        _render_progress_tab(all_datasets, loaded, pipeline_params, multi, ref_ds)
     with tab_final:
-        _render_final_tab(all_finals, loaded, pipeline_params, multi, ref_ds)
+        _render_final_tab(all_datasets, loaded, pipeline_params, multi, ref_ds)
 
 
 # ---------------------------------------------------------------------------
@@ -795,13 +811,13 @@ def render_preprocessing_page() -> None:
         st.session_state["sl_pipeline_params"] = pipeline_params
 
     with right:
-        all_stages, all_finals, errors = _run_preprocessing(loaded, pipeline_params)
+        all_datasets, errors = _run_preprocessing(loaded, pipeline_params)
 
         for err in errors:
             st.error(f"Processing error — {err}")
-        if not all_finals:
+        if not all_datasets:
             st.stop()
 
-        multi = len(all_finals) > 1
+        multi = len(all_datasets) > 1
 
-        _render_charts_fragment(all_stages, all_finals, loaded, pipeline_params, multi, ref_ds)
+        _render_charts_fragment(all_datasets, loaded, pipeline_params, multi, ref_ds)

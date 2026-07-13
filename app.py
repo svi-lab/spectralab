@@ -21,50 +21,8 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.markdown("""
-<style>
-    [data-testid="column"]:first-child { padding-right: 1rem; }
-    /* --- Typography Tier 1: block / section titles --- */
-    .section-header {
-        font-size: 0.95rem;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        color: #555;
-        margin-top: 0.4rem;
-        margin-bottom: 0.2rem;
-    }
-    /* --- Typography Tier 3: metadata, file info --- */
-    .info-box {
-        background: #f4f6fa;
-        border-radius: 6px;
-        padding: 0.45rem 0.7rem;
-        font-family: monospace;
-        font-size: 0.80rem;
-        line-height: 1.65;
-        margin-bottom: 0.4rem;
-    }
-    .stExpander { border: 1px solid #e0e4ec !important; border-radius: 6px !important; }
-    .st-key-remove_files button {
-        background-color: #fee2e2;
-        border-color: #fca5a5;
-        color: #991b1b;
-    }
-    .st-key-remove_files button:hover {
-        background-color: #fecaca;
-        border-color: #f87171;
-        color: #7f1d1d;
-    }
-    /* Step bar — Tier 1 typography to match section headers */
-    div.st-key-step_bar a {
-        font-size: 0.95rem !important;
-        font-weight: 700 !important;
-        text-transform: uppercase !important;
-        letter-spacing: 0.05em !important;
-        border-radius: 6px;
-    }
-</style>
-""", unsafe_allow_html=True)
+_style_path = Path(__file__).parent / "frontend" / "style.css"
+st.markdown(f"<style>{_style_path.read_text()}</style>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Named page objects — referenced by _render_step_bar for st.switch_page
@@ -123,7 +81,16 @@ def _render_step_bar(pg) -> None:
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
-    render_sidebar()
+    has_files = render_sidebar()
 
-_render_step_bar(pg)
-pg.run()
+if not has_files:
+    st.markdown(
+        '<div class="sl-hero">'
+        '<h1 class="sl-hero-title">SpectraLab</h1>'
+        '<p class="sl-hero-subtitle">&larr; Upload a file in the sidebar to start analysis</p>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+else:
+    _render_step_bar(pg)
+    pg.run()

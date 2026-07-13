@@ -5,6 +5,7 @@ __pycache__/
 data/
 .DS_Store
 CLAUDE.md
+DATA_FLOW.md
 /agent-skills
 
 # C extensions

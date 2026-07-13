@@ -12,19 +12,27 @@ from backend._shared.dataset import SpectralDataset
 
 
 @st.cache_data(show_spinner=False, max_entries=16)
-def _load_wdf_cached(raw_bytes: bytes) -> SpectralDataset:
-    return load_wdf(raw_bytes)
+def _load_wdf_cached(file_id: str, _raw_bytes: bytes) -> SpectralDataset:
+    """Keyed on Streamlit's stable per-upload ``file_id`` — excluding the
+    bytes from hashing skips an MD5 pass over the full file (~75 MB) on
+    every rerun. Trade-off: re-uploading an identical file gets a new
+    file_id and re-parses once; accepted."""
+    return load_wdf(_raw_bytes)
 
 
-def render_sidebar() -> None:
+def render_sidebar() -> bool:
     """Render the shared sidebar: upload, file info, and Remove button.
 
     Side effects:
-        Writes st.session_state["sl_loaded"]         — {fname: {bytes, hash, dataset}}
+        Writes st.session_state["sl_loaded"]         — {fname: {hash, dataset}}
         Writes st.session_state["sl_processing_ok"]  — bool
-        Calls st.stop() if no valid files are loaded.
+        Calls st.stop() if files were uploaded but none could be used.
+
+    Returns:
+        False if no files have been uploaded yet (caller should render the
+        pre-upload landing screen instead of the step bar / page content);
+        True otherwise.
     """
-    st.markdown("## SpectraLab")
 
     # ── File upload ──────────────────────────────────────────────────────────
     st.markdown('<p class="section-header">📂 Files</p>', unsafe_allow_html=True)
@@ -43,7 +51,7 @@ def render_sidebar() -> None:
         st.info("Upload one or more .wdf files to get started.")
         st.session_state.pop("sl_loaded", None)
         st.session_state.pop("sl_processing_ok", None)
-        st.stop()
+        return False
 
     with st.container(key="remove_files"):
         if st.button("Remove all files", width="stretch"):
@@ -51,6 +59,10 @@ def render_sidebar() -> None:
             st.session_state.pop("sl_pipeline_params", None)
             st.session_state.pop("sl_sample_structure", None)
             st.session_state.pop("sl_bg_ui", None)
+            # Finals memo keys include file_id, so stale entries can never be
+            # served to a new upload set — but there's no other eviction
+            # trigger, so drop them here rather than let them sit resident.
+            st.session_state.pop("_sl_finals_memo", None)
             for _key in (
                 "cd_enabled", "crr_enabled", "denoise_enabled", "norm_selection", "prog_title",
                 "bg_enabled", "bg_ref_source", "bg_ref_file",
@@ -71,9 +83,8 @@ def render_sidebar() -> None:
         for uf in uploaded_files:
             raw_bytes = uf.read()
             try:
-                dataset = _load_wdf_cached(raw_bytes)
+                dataset = _load_wdf_cached(uf.file_id, raw_bytes)
                 loaded[uf.name] = {
-                    "bytes": raw_bytes,
                     "hash": uf.file_id,
                     "dataset": dataset,
                 }
@@ -108,3 +119,4 @@ def render_sidebar() -> None:
     # ── Publish to session state ──────────────────────────────────────────────
     st.session_state["sl_loaded"] = loaded
     st.session_state["sl_processing_ok"] = processing_ok
+    return True
