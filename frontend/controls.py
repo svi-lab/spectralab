@@ -33,6 +33,13 @@ UNIT_DEFAULT = {
     "ElectronVolt": "energy",
 }
 
+# Engine option labels — shared with the Preprocessing page's 1D/3D quick
+# presets, which seed the widget keys with these exact strings.
+CRR_ENGINE_1D          = "1D — per spectrum"
+CRR_ENGINE_2D3D        = "2D / 3D — collection & spatial"
+DENOISE_ENGINE_PCA      = "PCA — population-based"
+DENOISE_ENGINE_SMOOTHER = "Smoother — per spectrum"
+
 
 
 def render_axis_controls(
@@ -111,7 +118,7 @@ def render_crr_params() -> dict[str, Any]:
     """Render CosmicRayRemover parameter widgets. Returns crr_params dict."""
     engine = st.selectbox(
         "Engine mode",
-        options=["1D — per spectrum", "2D / 3D — collection & spatial"],
+        options=[CRR_ENGINE_1D, CRR_ENGINE_2D3D],
         key="crr_engine_mode",
         help=(
             "**1D — per spectrum:** each spectrum is corrected independently "
@@ -124,7 +131,7 @@ def render_crr_params() -> dict[str, Any]:
             "spectral features."
         ),
     )
-    force_1d = (engine == "1D — per spectrum")
+    force_1d = (engine == CRR_ENGINE_1D)
 
     with st.expander("1D engine parameters", expanded=True):
         col1, col2 = st.columns(2)
@@ -192,7 +199,7 @@ def render_denoising_params() -> dict[str, Any]:
     """Render Denoiser parameter widgets. Returns denoiser params dict."""
     engine = st.selectbox(
         "Engine",
-        options=["PCA — population-based", "Smoother — per spectrum"],
+        options=[DENOISE_ENGINE_PCA, DENOISE_ENGINE_SMOOTHER],
         key="denoise_engine",
         help=(
             "**PCA — population-based:** fits a low-rank PCA model on all "
@@ -204,7 +211,7 @@ def render_denoising_params() -> dict[str, Any]:
             "Works on any data shape including single spectra."
         ),
     )
-    per_spectrum = (engine == "Smoother — per spectrum")
+    per_spectrum = (engine == DENOISE_ENGINE_SMOOTHER)
 
     nc_type   = "mle"
     nc_int    = 2
