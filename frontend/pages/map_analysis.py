@@ -10,15 +10,19 @@ import streamlit as st
 from backend._shared.dataset import SpectralDataset
 from streamlit_echarts import st_echarts
 
-from ..controls import render_map_display_controls
+from ..charts import convert_x, convert_x_to_native
+from ..controls import render_axis_controls, render_map_display_controls
 from ..map_chart import make_map_fig, make_mean_spectrum_option
 from ..pipeline_cache import default_pipeline_params, final_da, get_finals
 
-_UNIT_DISPLAY = {
-    "RamanShift":   "cm⁻¹",
-    "Wavenumber":   "cm⁻¹",
-    "Nanometer":    "nm",
-    "ElectronVolt": "eV",
+# Short colorbar-caption label for the *display* x_unit (from render_axis_controls),
+# not the file's native storage unit — the map/slider always operate in whatever unit
+# the user has selected.
+_SHORT_UNIT = {
+    "wavelength":  "nm",
+    "energy":      "eV",
+    "wavenumber":  "cm⁻¹",
+    "raman_shift": "cm⁻¹",
 }
 
 
@@ -36,6 +40,8 @@ def _make_map_fig_cached(
     title: str,
     spectral_unit: str,
     map_opacity: float,
+    label_min: float,
+    label_max: float,
 ):
     """Spectral-range integration/deviation + figure build — recomputed on
     every slider tick otherwise, even when other page widgets trigger the
@@ -44,7 +50,7 @@ def _make_map_fig_cached(
         da=_da_map, image_arr=_image_arr, image_meta=image_meta,
         lambda_min=lmin, lambda_max=lmax, quantity=quantity,
         colorscale=colorscale, title=title, spectral_unit=spectral_unit,
-        map_opacity=map_opacity,
+        map_opacity=map_opacity, label_min=label_min, label_max=label_max,
     )
 
 
@@ -52,23 +58,45 @@ def _make_map_fig_cached(
 def _render_map_section(
     da_map, ds: SpectralDataset, map_name: str, file_hash: str,
     pipeline_params: dict[str, Any], quantity: str, colorscale: str,
-    spectral_unit_display: str, map_opacity: float,
+    x_unit: str, laser_nm: float | None, map_opacity: float,
 ) -> None:
     spectral_dim = da_map.dims[-1]
-    spec_coords = da_map.coords[spectral_dim].values
-    spec_min_val = float(spec_coords[0])
-    spec_max_val = float(spec_coords[-1])
-    step = max(round((spec_max_val - spec_min_val) / len(spec_coords), 2), 0.1)
-    _default_lmin = round(spec_min_val + (spec_max_val - spec_min_val) * 0.2, 1)
-    _default_lmax = round(spec_min_val + (spec_max_val - spec_min_val) * 0.8, 1)
+    x_native = da_map.coords[spectral_dim].values
+    x_disp = convert_x(
+        x_native, spectral_dim, x_unit, laser_nm,
+        src_unit=ds.spectral_unit, native_type=ds.spectral_units,
+    )
+    # .min()/.max() rather than [0]/[-1]: eV is inversely related to nm, so converting
+    # an ascending native coordinate can flip the array to descending.
+    disp_min = float(x_disp.min())
+    disp_max = float(x_disp.max())
+    is_energy = x_unit == "energy"
+    step = 0.01 if is_energy else max(round((disp_max - disp_min) / len(x_disp), 2), 0.1)
+    ndigits = 2 if is_energy else 1
+    _default_lmin = round(disp_min + (disp_max - disp_min) * 0.2, ndigits)
+    _default_lmax = round(disp_min + (disp_max - disp_min) * 0.8, ndigits)
+
+    # Per-unit session-state key: switching units mid-session must not hand a stale
+    # nm-range value to a slider now bounded in eV (same pattern as preprocessing.py's
+    # f"prog_from_{x_unit}"/f"prog_to_{x_unit}").
+    range_key = f"map_spec_range_{x_unit}"
+    spectral_unit_label = _SHORT_UNIT.get(x_unit, x_unit)
 
     with st.spinner("Building map…"):
-        lmin, lmax = st.session_state.get("map_spec_range", (_default_lmin, _default_lmax))
-        if lmin < lmax:
+        lmin_disp, lmax_disp = st.session_state.get(range_key, (_default_lmin, _default_lmax))
+        if lmin_disp < lmax_disp:
+            lmin_native = convert_x_to_native(
+                lmin_disp, spectral_dim, x_unit, laser_nm,
+                src_unit=ds.spectral_unit, native_type=ds.spectral_units,
+            )
+            lmax_native = convert_x_to_native(
+                lmax_disp, spectral_dim, x_unit, laser_nm,
+                src_unit=ds.spectral_unit, native_type=ds.spectral_units,
+            )
             fig_map = _make_map_fig_cached(
                 file_hash, pipeline_params, da_map, ds.image_arr, ds.image_meta,
-                lmin, lmax, quantity, colorscale, map_name, spectral_unit_display,
-                map_opacity,
+                lmin_native, lmax_native, quantity, colorscale, map_name, spectral_unit_label,
+                map_opacity, lmin_disp, lmax_disp,
             )
             st.plotly_chart(fig_map, width="stretch", height=600)
 
@@ -79,21 +107,24 @@ def _render_map_section(
 
     _, _slider_col, _ = st.columns([0.5, 11, 0.24])  # adjust outer cols to tune width
     with _slider_col:
-        lmin, lmax = st.slider(
+        lmin_disp, lmax_disp = st.slider(
             "Spectral range",
-            min_value=spec_min_val,
-            max_value=spec_max_val,
+            min_value=disp_min,
+            max_value=disp_max,
             value=(_default_lmin, _default_lmax),
             step=step,
-            key="map_spec_range",
+            key=range_key,
             label_visibility="collapsed",
         )
-    if lmin >= lmax:
+    if lmin_disp >= lmax_disp:
         st.warning("Left handle must be less than right handle.")
 
     mean_da = da_map.mean([d for d in da_map.dims if d != spectral_dim], skipna=True)
     st_echarts(
-        make_mean_spectrum_option(mean_da, lmin, lmax, spectral_unit_display),
+        make_mean_spectrum_option(
+            mean_da, lmin_disp, lmax_disp, x_unit, laser_nm,
+            src_unit=ds.spectral_unit, native_type=ds.spectral_units,
+        ),
         height="200px",
     )
 
@@ -135,6 +166,9 @@ def render_map_page() -> None:
 
         with st.container(border=True):
             st.markdown('<p class="section-header">Display</p>', unsafe_allow_html=True)
+            x_unit, laser_nm = render_axis_controls(
+                "map", ds.laser_nm, native_type=ds.spectral_units,
+            )
             quantity = st.selectbox(
                 "Quantity",
                 ["integrated", "deviation"],
@@ -152,12 +186,8 @@ def render_map_page() -> None:
             st.warning("Processing result not available for this file. Visit the Preprocessing page first.")
         return
 
-    spectral_unit_display = (
-        _UNIT_DISPLAY.get(ds.spectral_units) or ds.spectral_unit or "nm"
-    )
-
     with right:
         _render_map_section(
             da_map, ds, map_name, loaded[map_name]["hash"], pipeline_params,
-            quantity, colorscale, spectral_unit_display, map_opacity,
+            quantity, colorscale, x_unit, laser_nm, map_opacity,
         )

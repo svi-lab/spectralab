@@ -12,7 +12,7 @@ import xarray as xr
 from _shared._spectral import resolve_spectral_dim, with_new_values
 from _shared.utils import ensure_in_memory
 from .mask_1d import remove_cosmic_rays_1d
-from .harmonic import harmonic_correct_dataarray
+from .harmonic import harmonic_correct_dataarray, grating_artifact_correct_dataarray
 from .mask_map import (
     correct_cosmic_rays_collection,
     correct_cosmic_rays_on_map_cube,
@@ -55,8 +55,9 @@ class CosmicRayRemover:
       additionally respects :attr:`map_sensitivity` and
       :attr:`map_disk_radius`.
 
-    Optionally removes broad Nd:YAG harmonics before spike removal via
-    :meth:`harmonic_check` / :meth:`remove`.
+    Optionally removes broad Nd:YAG harmonics and the grating's 2nd-order
+    ghost of the excitation line before spike removal via
+    :meth:`harmonic_check` / :meth:`grating_artifact_check` / :meth:`remove`.
 
     Parameters
     ----------
@@ -169,8 +170,22 @@ class CosmicRayRemover:
             spectral_dim=self.spectral_dim,
         )
 
+    def grating_artifact_check(self, spectrum: xr.DataArray) -> xr.DataArray:
+        """Notch the grating's 2nd-order ghost of the excitation line, at
+        2 × ``spectrum.attrs['laser_wavelength_nm']``.
+
+        Unlike :meth:`harmonic_check`, this applies for any known
+        excitation wavelength — it's a property of the grating, not
+        specific to the Nd:YAG line. Uses the same search/notch/
+        interpolate logic as the harmonic check.
+        """
+        return grating_artifact_correct_dataarray(
+            spectrum,
+            spectral_dim=self.spectral_dim,
+        )
+
     def remove_cosmic_rays(self, spectrum: xr.DataArray) -> xr.DataArray:
-        """Spike removal only (no harmonic notch)."""
+        """Spike removal only (no harmonic/grating notch)."""
         out, _ = self._route(spectrum, want_diagnostics=False)
         return out
 
@@ -195,20 +210,25 @@ class CosmicRayRemover:
         return self._route(spectrum, want_diagnostics=True)
 
     def remove(self, spectrum: xr.DataArray) -> xr.DataArray:
-        """Harmonic cleanup first, then cosmic-ray removal."""
-        return self.remove_cosmic_rays(self.harmonic_check(spectrum))
+        """Harmonic + grating-artifact cleanup first, then cosmic-ray
+        removal."""
+        spectrum = self.harmonic_check(spectrum)
+        spectrum = self.grating_artifact_check(spectrum)
+        return self.remove_cosmic_rays(spectrum)
 
     def remove_with_diagnostics(
         self,
         spectrum: xr.DataArray,
     ) -> tuple[xr.DataArray, dict[str, Any]]:
-        """Harmonics, then :meth:`remove_cosmic_rays_with_diagnostics`."""
-        return self.remove_cosmic_rays_with_diagnostics(
-            self.harmonic_check(spectrum)
-        )
+        """Harmonics + grating artifact, then
+        :meth:`remove_cosmic_rays_with_diagnostics`."""
+        spectrum = self.harmonic_check(spectrum)
+        spectrum = self.grating_artifact_check(spectrum)
+        return self.remove_cosmic_rays_with_diagnostics(spectrum)
 
     def transform(self, spectrum: xr.DataArray) -> xr.DataArray:
-        """Alias of :meth:`remove` (harmonics then cosmic rays)."""
+        """Alias of :meth:`remove` (harmonics + grating artifact, then
+        cosmic rays)."""
         return self.remove(spectrum)
 
     # ------------------------------------------------------------------

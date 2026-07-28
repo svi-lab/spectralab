@@ -11,6 +11,8 @@ import streamlit as st
 import xarray as xr
 from PIL import Image as PILImage
 
+from .charts import UNIT_LABELS, convert_x
+
 FS_TITLE = 26
 FS_AXIS  = 22
 FS_TICK  = 18
@@ -49,20 +51,36 @@ def make_mean_spectrum_option(
     mean_da: xr.DataArray,
     lmin: float,
     lmax: float,
-    spectral_unit: str,
+    x_unit: str,
+    laser_nm: float | None = None,
+    *,
+    src_unit: str = "",
+    native_type: str = "",
 ) -> dict:
-    """ECharts option for mean spectrum with highlighted selection range."""
-    x = mean_da.coords[mean_da.dims[0]].values.tolist()
+    """ECharts option for mean spectrum with highlighted selection range.
+
+    ``lmin``/``lmax`` (the highlighted range) must already be in ``x_unit`` — the
+    caller is responsible for converting a native-unit range beforehand (they're
+    typically the same slider values driving the map's spectral-range selection).
+    The plotted x-coordinate is converted from ``mean_da``'s native coordinate to
+    ``x_unit`` here via the same :func:`convert_x` every other spectral chart uses.
+    """
+    spectral_dim = mean_da.dims[0]
+    x_native = mean_da.coords[spectral_dim].values
+    x = convert_x(
+        x_native, spectral_dim, x_unit, laser_nm,
+        src_unit=src_unit, native_type=native_type,
+    ).tolist()
     y = np.nan_to_num(mean_da.values).tolist()
     return {
         "animation": False,
         "grid": {"top": 24, "bottom": 50, "left": 10, "right": 30},
         "xAxis": {
             "type": "value",
-            "name": "",
+            "name": UNIT_LABELS.get(x_unit, ""),
             "nameLocation": "end",
-            "min": x[0] if x else None,
-            "max": x[-1] if x else None,
+            "min": min(x) if x else None,
+            "max": max(x) if x else None,
             "nameTextStyle": {"fontSize": 12},
             "axisLabel": {"fontSize": 11},
         },
@@ -205,6 +223,8 @@ def make_map_fig(
     title: str = "",
     spectral_unit: str = "nm",
     map_opacity: float = 0.75,
+    label_min: float | None = None,
+    label_max: float | None = None,
 ) -> go.Figure:
     """Heatmap of spectral quantity overlaid on the white-light image.
 
@@ -218,12 +238,20 @@ def make_map_fig(
         Dict with keys ``origin_x``, ``origin_y``, ``fov_x``, ``fov_y``
         (all in µm, origin = top-left of image in stage coordinates).
     lambda_min, lambda_max:
-        Spectral integration range.
+        Spectral integration range, in ``da``'s native coordinate units — always
+        used for the actual ``.sel(slice(...))`` integration.
     quantity:
         ``"integrated"`` — sum of intensity in [lambda_min, lambda_max].
         ``"deviation"``  — mean |spectrum − mean_spectrum| in that range.
     colorscale:
         Plotly colorscale name.
+    spectral_unit:
+        Short unit label for the colorbar caption (e.g. ``"nm"``, ``"eV"``).
+    label_min, label_max:
+        Range to print in the colorbar caption, in ``spectral_unit`` — may differ
+        from ``lambda_min``/``lambda_max`` when the caller displays a different unit
+        than ``da``'s native storage unit. Defaults to ``lambda_min``/``lambda_max``
+        when omitted (native unit shown == native unit sliced).
     """
     spectral_dim = da.dims[-1]
     x_coords = da.coords["column"].values
@@ -234,13 +262,18 @@ def make_map_fig(
     da_range = da.sel({spectral_dim: slice(lmin, lmax)})
     spatial_dims = [d for d in da_range.dims if d != spectral_dim]
 
+    label_lo = lmin if label_min is None else min(label_min, label_max)
+    label_hi = lmax if label_max is None else max(label_min, label_max)
+    _fmt = "{:.2f}" if spectral_unit == "eV" else "{:.0f}"
+    label_range = f"{_fmt.format(label_lo)}–{_fmt.format(label_hi)} {spectral_unit}"
+
     if quantity == "deviation":
         mean_spec = da_range.mean(spatial_dims)
         z = np.abs(da_range - mean_spec).sum(spectral_dim, min_count=1).values
-        cbar_label = f"deviation from mean ({lmin:.0f}–{lmax:.0f} {spectral_unit})"
+        cbar_label = f"deviation from mean ({label_range})"
     else:
         z = da_range.sum(spectral_dim, min_count=1).values
-        cbar_label = f"integrated intensity ({lmin:.0f}–{lmax:.0f} {spectral_unit})"
+        cbar_label = f"integrated intensity ({label_range})"
 
     return make_scalar_map_fig(
         z, y_coords, x_coords, image_arr, image_meta,

@@ -337,8 +337,13 @@ def _datazoom(
     end_value=None,
     x_unit: str = "wavelength",
 ) -> list:
-    inside = {"type": "inside", "xAxisIndex": 0}
-    slider = {"type": "slider", "xAxisIndex": 0, "bottom": 10, "height": 35}
+    # xAxisIndex targets both the primary AND secondary (top, other-unit) axis —
+    # every spectral chart here has two x-axes mirroring the same physical range in
+    # different units (see _make_axes). Binding the region selector to xAxisIndex 0
+    # only would zoom the bottom axis while leaving the top axis frozen at the full
+    # original range, so after a zoom the two axes would disagree about what's shown.
+    inside = {"type": "inside", "xAxisIndex": [0, 1]}
+    slider = {"type": "slider", "xAxisIndex": [0, 1], "bottom": 10, "height": 35}
     if x_unit == "energy":
         fmt_js = "function(v) { return v.toFixed(2); }"
     else:

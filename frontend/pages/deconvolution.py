@@ -23,7 +23,7 @@ from backend.peak_fitter import (
 )
 from ..export_utils import batch_fit_to_npz, fit_curves_to_npz
 
-from ..charts import convert_x_to_native, make_deconv_fit_echarts, make_deconv_preview_echarts
+from ..charts import convert_x, convert_x_to_native, make_deconv_fit_echarts, make_deconv_preview_echarts
 from ..controls import render_axis_controls, render_map_display_controls
 from ..map_chart import make_scalar_map_fig
 from ..pipeline_cache import default_pipeline_params, final_da, get_finals
@@ -105,21 +105,19 @@ def _preset_band_half_widths_nm(presets: tuple[BandPreset, ...]) -> dict[float, 
     return half_widths
 
 
-def _preset_rows_to_table_rows(presets: tuple[BandPreset, ...], native_type: str) -> list[dict]:
+def _preset_rows_to_table_rows(presets: tuple[BandPreset, ...]) -> list[dict]:
+    """Band table rows always in eV — fitting on this page always runs in energy space,
+    independent of the file's native storage unit (see render_deconvolution_page)."""
     half_widths = _preset_band_half_widths_nm(presets)
     rows: list[dict] = []
     for p in presets:
         half = half_widths[p.wavelength_nm]
         nm_lo = p.wavelength_nm - half
         nm_hi = p.wavelength_nm + half
-        if native_type == "ElectronVolt":
-            center = p.energy_ev
-            # nm -> eV is inversely proportional, so the longer-wavelength edge maps to
-            # the lower-energy bound. 1239.84 is the same hc[eV*nm] constant charts.convert_x uses.
-            lo, hi = 1239.84 / nm_hi, 1239.84 / nm_lo
-        else:  # "Nanometer" — the only other native type this PL-only page allows
-            center = p.wavelength_nm
-            lo, hi = nm_lo, nm_hi
+        center = p.energy_ev
+        # nm -> eV is inversely proportional, so the longer-wavelength edge maps to
+        # the lower-energy bound. 1239.84 is the same hc[eV*nm] constant charts.convert_x uses.
+        lo, hi = 1239.84 / nm_hi, 1239.84 / nm_lo
         rows.append({
             "label": p.label, "center_guess": center,
             "center_min": round(lo, 4), "center_max": round(hi, 4),
@@ -301,10 +299,18 @@ def render_deconvolution_page() -> None:
                 target_x = target_da.coords[spectral_dim].values
                 target_y = target_da.values
 
-        unit_label = "eV" if ds.spectral_units == "ElectronVolt" else "nm"
+            # Fitting on this page always runs in energy space, regardless of the
+            # file's native storage unit (Nanometer/ElectronVolt) or the Display
+            # selector above — those still only affect what's drawn on the chart.
+            target_x = convert_x(
+                target_x, spectral_dim, "energy", laser_nm,
+                src_unit=ds.spectral_unit, native_type=ds.spectral_units,
+            )
+
+        unit_label = "eV"
         with st.container(border=True):
             st.markdown('<p class="section-header">Band Parameters</p>', unsafe_allow_html=True)
-            st.caption(f"Positions are in native units ({unit_label}), matching this file's stored axis.")
+            st.caption("Positions are in energy units (eV) — fitting always runs on the energy axis, independent of this file's stored units or the Display selector above.")
 
             preset_choice = st.selectbox(
                 "Load preset", ["— none —", *list_preset_materials()], key="deconv_preset_select",
@@ -330,7 +336,7 @@ def render_deconvolution_page() -> None:
                     hide_index=True,
                 )
                 if st.button(f"Add {len(presets)} bands from {preset_choice}", key="deconv_add_preset"):
-                    _append_bands(_preset_rows_to_table_rows(presets, ds.spectral_units))
+                    _append_bands(_preset_rows_to_table_rows(presets))
 
             qc1, qc2, qc3, qc4 = st.columns([2, 2, 1, 1])
             qa_center = qc1.number_input(
@@ -432,23 +438,28 @@ def render_deconvolution_page() -> None:
 
         fit_title = st.text_input("Chart title", value="Peak Deconvolution", key="deconv_fit_title")
         st.caption("Click anywhere on the plot to drop a new band there and (re)fit.")
+        # fit_result.x / target_x / band centers are always eV (fitting always runs in
+        # energy space — see above), so native_type is forced to ElectronVolt here
+        # regardless of ds.spectral_units: these chart builders need to know the
+        # *input* array's unit class to correctly re-derive the Display selector's
+        # x_unit, and that input is now always eV, not the file's stored unit.
         if has_fit:
             chart_options = make_deconv_fit_echarts(
                 fit_result, spectral_dim,
                 title=fit_title,
                 x_unit=x_unit, laser_nm=laser_nm,
-                src_unit=ds.spectral_unit, native_type=ds.spectral_units,
+                src_unit=ds.spectral_unit, native_type="ElectronVolt",
             )
         else:
-            band_centers_native = [
+            band_centers_ev = [
                 c for row in bands_table
                 if (c := _none_or_float(row.get("center_guess"))) is not None
             ]
             chart_options = make_deconv_preview_echarts(
-                target_x, target_y, spectral_dim, band_centers_native,
+                target_x, target_y, spectral_dim, band_centers_ev,
                 title=fit_title,
                 x_unit=x_unit, laser_nm=laser_nm,
-                src_unit=ds.spectral_unit, native_type=ds.spectral_units,
+                src_unit=ds.spectral_unit, native_type="ElectronVolt",
             )
         chart_value = st_echarts(
             chart_options,
@@ -461,12 +472,15 @@ def render_deconvolution_page() -> None:
         # not-None check is exactly-once per click -- no manual dedup needed.
         click_value = (chart_value or {}).get("chart_event")
         if click_value is not None:
-            x_native = convert_x_to_native(
+            # The click lands in whatever unit the chart is currently displayed in
+            # (x_unit); convert it into eV (forcing native_type="ElectronVolt" as the
+            # conversion target) since the band table is always in eV now.
+            x_ev = convert_x_to_native(
                 click_value["x"], spectral_dim, x_unit, laser_nm,
-                src_unit=ds.spectral_unit, native_type=ds.spectral_units,
+                src_unit=ds.spectral_unit, native_type="ElectronVolt",
             )
             _append_bands([{
-                "label": None, "center_guess": round(x_native, 4),
+                "label": None, "center_guess": round(x_ev, 4),
                 "center_min": None, "center_max": None,
                 "sigma_guess": None, "sigma_min": None, "sigma_max": None,
             }])
@@ -514,8 +528,17 @@ def render_deconvolution_page() -> None:
                 def _cb(done: int, total: int) -> None:
                     progress_bar.progress(done / total)
 
+                # Fit against an eV-coordinate view of da_final (labels only, via
+                # assign_coords — no data copy, intensity untouched), matching the
+                # single-spectrum fit path above which always runs in energy space.
+                da_final_ev = da_final.assign_coords({
+                    spectral_dim: convert_x(
+                        da_final.coords[spectral_dim].values, spectral_dim, "energy", laser_nm,
+                        src_unit=ds.spectral_unit, native_type=ds.spectral_units,
+                    )
+                })
                 with st.spinner("Fitting every pixel…"):
-                    batch_result = fit_map_gaussian(da_final, bands, progress_callback=_cb)
+                    batch_result = fit_map_gaussian(da_final_ev, bands, progress_callback=_cb)
                 progress_bar.empty()
                 st.session_state["sl_deconv_batch_result"] = batch_result
                 st.session_state["sl_deconv_batch_labels"] = [b.label or f"Band {i+1}" for i, b in enumerate(bands)]

@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Nd:YAG laser-harmonic notches (broad features, not cosmic-ray spikes)."""
+"""Laser-line notches: Nd:YAG harmonics and grating 2nd-order artifacts.
+
+Both are broad features (not cosmic-ray spikes) removed by locating a peak
+near a target wavelength and linearly interpolating a narrow notch across it.
+"""
 
 from __future__ import annotations
 
 import re
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 import numpy as np
 import xarray as xr
@@ -24,10 +28,10 @@ _ND_YAG_TRIGGER_NM_HIGH = 356.0
 _HARMONIC_WAVELENGTHS_NM: tuple[float, ...] = (1064.0, 532.0, 355.0, 266.0)
 
 # ± nm around catalogue line to search for the broad peak top.
-_SEARCH_HALF_WIDTH_NM = 2.5
+_SEARCH_HALF_WIDTH_NM = 3
 
 # Total removal width in wavelength space (nm).
-_NOTCH_FULL_WIDTH_NM = 2
+_NOTCH_FULL_WIDTH_NM = 3
 
 
 def read_laser_wavelength_nm(attrs: Mapping[str, Any]) -> float | None:
@@ -52,6 +56,20 @@ def should_apply_nd_yag_harmonic_cleanup(
     if laser_wavelength_nm is None or not np.isfinite(laser_wavelength_nm):
         return False
     return _ND_YAG_TRIGGER_NM_LOW <= laser_wavelength_nm <= _ND_YAG_TRIGGER_NM_HIGH
+
+
+def should_apply_grating_artifact_cleanup(
+    laser_wavelength_nm: float | None,
+) -> bool:
+    """True whenever a valid excitation wavelength is known.
+
+    Unlike the Nd:YAG harmonic catalogue, the grating's 2nd-order ghost of
+    the excitation line is a property of the grating, not the laser, so
+    this applies for any excitation wavelength (no band restriction).
+    """
+    if laser_wavelength_nm is None or not np.isfinite(laser_wavelength_nm):
+        return False
+    return laser_wavelength_nm > 0
 
 
 def axis_is_absolute_wavenumber_cm(
@@ -136,6 +154,51 @@ def _spectral_coord_in_interval_mask(
     return (x >= a) & (x <= b)
 
 
+def _notch_target_wavelength(
+    x: np.ndarray,
+    y_work: np.ndarray,
+    target_nm: float,
+    wavenumber_axis: bool,
+) -> tuple[np.ndarray, float | None]:
+    """Find the broad peak nearest ``target_nm`` and notch ~1 nm around it
+    via linear interpolation.
+
+    Returns the (possibly unchanged) array and the removed peak's
+    wavelength in nm, or ``None`` if no peak was found/removed.
+    """
+    search_lo, search_hi = _axis_interval_around_wavelength_nm(
+        target_nm,
+        wavenumber_axis=wavenumber_axis,
+        half_width_nm=_SEARCH_HALF_WIDTH_NM,
+    )
+    x_min, x_max = float(np.nanmin(x)), float(np.nanmax(x))
+    if search_hi < x_min or search_lo > x_max:
+        return y_work, None
+    search_mask = _spectral_coord_in_interval_mask(x, search_lo, search_hi)
+    if not np.any(search_mask):
+        return y_work, None
+    idx_candidates = np.flatnonzero(search_mask)
+    local = y_work[search_mask]
+    if local.size == 0 or np.all(np.isnan(local)):
+        return y_work, None
+    rel_imax = int(np.nanargmax(local))
+    imax = int(idx_candidates[rel_imax])
+    peak_x = float(x[imax])
+
+    notch_lo, notch_hi = _notch_interval_in_axis_units(
+        peak_x, wavenumber_axis=wavenumber_axis
+    )
+    if notch_lo == notch_hi:
+        return y_work, None
+    remove_mask = _spectral_coord_in_interval_mask(x, notch_lo, notch_hi)
+    if not np.any(remove_mask) or np.all(remove_mask):
+        return y_work, None
+
+    peak_nm = _peak_wavelength_nm(peak_x, wavenumber_axis)
+    y_work = linear_interpolate_masked_channels_1d(y_work, remove_mask)
+    return y_work, float(peak_nm)
+
+
 def remove_harmonic_notches_from_spectrum_1d(
     x_coord: np.ndarray,
     intensities: np.ndarray,
@@ -155,43 +218,103 @@ def remove_harmonic_notches_from_spectrum_1d(
     peaks_nm: list[float] = []
 
     for h_nm in _HARMONIC_WAVELENGTHS_NM:
-        search_lo, search_hi = _axis_interval_around_wavelength_nm(
-            h_nm,
-            wavenumber_axis=wavenumber_axis,
-            half_width_nm=_SEARCH_HALF_WIDTH_NM,
-        )
-        x_min, x_max = float(np.nanmin(x)), float(np.nanmax(x))
-        if search_hi < x_min or search_lo > x_max:
+        y_work, peak_nm = _notch_target_wavelength(x, y_work, h_nm, wavenumber_axis)
+        if peak_nm is None:
             continue
-        search_mask = _spectral_coord_in_interval_mask(x, search_lo, search_hi)
-        if not np.any(search_mask):
-            continue
-        idx_candidates = np.flatnonzero(search_mask)
-        local = y_work[search_mask]
-        if local.size == 0 or np.all(np.isnan(local)):
-            continue
-        rel_imax = int(np.nanargmax(local))
-        imax = int(idx_candidates[rel_imax])
-        peak_x = float(x[imax])
-
-        notch_lo, notch_hi = _notch_interval_in_axis_units(
-            peak_x, wavenumber_axis=wavenumber_axis
-        )
-        if notch_lo == notch_hi:
-            continue
-        remove_mask = _spectral_coord_in_interval_mask(x, notch_lo, notch_hi)
-        if not np.any(remove_mask) or np.all(remove_mask):
-            continue
-
-        peak_nm = _peak_wavelength_nm(peak_x, wavenumber_axis)
         print(
             f"355nm laser detected. Harmonic peak at {peak_nm:g} "
             f"nm is deleted for spectra {filename}"
         )
-        y_work = linear_interpolate_masked_channels_1d(y_work, remove_mask)
-        peaks_nm.append(float(peak_nm))
+        peaks_nm.append(peak_nm)
 
     return y_work, peaks_nm
+
+
+def remove_grating_artifact_from_spectrum_1d(
+    x_coord: np.ndarray,
+    intensities: np.ndarray,
+    *,
+    wavenumber_axis: bool,
+    laser_wavelength_nm: float,
+    filename: str,
+) -> tuple[np.ndarray, list[float]]:
+    """Notch ~1 nm around the grating's 2nd-order ghost of the excitation
+    line (at 2× the laser wavelength), using the same 1D masking logic as
+    :func:`remove_harmonic_notches_from_spectrum_1d`.
+    """
+    if x_coord.size < 3 or intensities.shape != x_coord.shape:
+        return intensities.copy(), []
+
+    y_work = np.asarray(intensities, dtype=float).copy()
+    x = np.asarray(x_coord, dtype=float)
+    target_nm = 2.0 * laser_wavelength_nm
+
+    y_work, peak_nm = _notch_target_wavelength(x, y_work, target_nm, wavenumber_axis)
+    if peak_nm is None:
+        return y_work, []
+
+    print(
+        f"Grating 2nd-order artifact at {peak_nm:g} nm "
+        f"(2x{laser_wavelength_nm:g} nm excitation) removed for spectra {filename}"
+    )
+    return y_work, [peak_nm]
+
+
+def _resolve_wavenumber_axis(da: xr.DataArray, sdim: str) -> bool | None:
+    """True/False for wavenumber/wavelength axis, or None if unrecognized."""
+    if axis_is_absolute_wavenumber_cm(da, sdim):
+        return True
+    units_s = str(da[sdim].attrs.get("units", "")).lower()
+    if re.search(r"\bnm\b|\bµm\b", units_s) or sdim.lower() == "nm":
+        return False
+    return None
+
+
+def _correct_dataarray_per_spectrum(
+    da: xr.DataArray,
+    *,
+    spectral_dim: str | None,
+    laser_nm: float,
+    notch_row: Callable[[np.ndarray, np.ndarray, bool, str], tuple[np.ndarray, list[float]]],
+    stage_label: str,
+    peaks_key: str,
+) -> xr.DataArray:
+    """Shared per-spectrum notch driver for the harmonic and grating checks:
+    resolves the axis, loops every spectrum applying ``notch_row``, clamps
+    to ≥ 0, and records removed peaks in ``attrs`` when any were found.
+    """
+    sdim = resolve_spectral_dim(da, spectral_dim)
+    wavenumber_axis = _resolve_wavenumber_axis(da, sdim)
+    if wavenumber_axis is None:
+        return da
+
+    filename = _filename_for_messages(da.attrs)
+    da_t, orig_order = transpose_spectral_last(da, sdim)
+    x = np.asarray(da_t[sdim].values, dtype=float)
+    flat = da_t.values.reshape(-1, x.size)
+    corrected = np.empty_like(flat, dtype=float)
+    all_peaks: list[float] = []
+
+    for row in range(flat.shape[0]):
+        if np.all(np.isnan(flat[row])):
+            corrected[row] = flat[row]  # preserve NaN (dead pixel)
+            continue
+        y_row, peaks = notch_row(x, flat[row], wavenumber_axis, filename)
+        corrected[row] = y_row
+        all_peaks.extend(peaks)
+
+    # Non-negativity clamp: notch repair must not create negative values
+    corrected = np.maximum(corrected, 0.0)
+
+    out_t = da_t.copy(data=corrected.reshape(da_t.shape))
+    if out_t.dims != orig_order:
+        out_t = out_t.transpose(*orig_order)
+
+    if not all_peaks:
+        return out_t
+
+    meta = {"excitation_laser_nm": laser_nm, peaks_key: all_peaks}
+    return with_new_values(out_t, out_t.values, stage_label, meta)
 
 
 def harmonic_correct_dataarray(
@@ -209,48 +332,40 @@ def harmonic_correct_dataarray(
     if not should_apply_nd_yag_harmonic_cleanup(laser_nm):
         return da
 
-    sdim = resolve_spectral_dim(da, spectral_dim)
-    if axis_is_absolute_wavenumber_cm(da, sdim):
-        wavenumber_axis = True
-    else:
-        units_s = str(da[sdim].attrs.get("units", "")).lower()
-        if re.search(r"\bnm\b|\bµm\b", units_s) or sdim.lower() == "nm":
-            wavenumber_axis = False
-        else:
-            return da
+    return _correct_dataarray_per_spectrum(
+        da,
+        spectral_dim=spectral_dim,
+        laser_nm=laser_nm,
+        notch_row=lambda x, y, wn, fn: remove_harmonic_notches_from_spectrum_1d(
+            x, y, wavenumber_axis=wn, filename=fn
+        ),
+        stage_label="Laser harmonic removal",
+        peaks_key="harmonic_peaks_removed_nm",
+    )
 
-    filename = _filename_for_messages(da.attrs)
-    da_t, orig_order = transpose_spectral_last(da, sdim)
-    x = np.asarray(da_t[sdim].values, dtype=float)
-    flat = da_t.values.reshape(-1, x.size)
-    corrected = np.empty_like(flat, dtype=float)
-    all_peaks: list[float] = []
 
-    for row in range(flat.shape[0]):
-        if np.all(np.isnan(flat[row])):
-            corrected[row] = flat[row]  # preserve NaN (dead pixel)
-            continue
-        y_row, peaks = remove_harmonic_notches_from_spectrum_1d(
-            x,
-            flat[row],
-            wavenumber_axis=wavenumber_axis,
-            filename=filename,
-        )
-        corrected[row] = y_row
-        all_peaks.extend(peaks)
+def grating_artifact_correct_dataarray(
+    da: xr.DataArray,
+    *,
+    spectral_dim: str | None = None,
+) -> xr.DataArray:
+    """Notch the grating's 2nd-order ghost of the excitation line (at 2×
+    laser_wavelength_nm) on every slice, for any known excitation wavelength.
 
-    # Non-negativity clamp: harmonic repair must not create negative values
-    corrected = np.maximum(corrected, 0.0)
+    Uses the same per-spectrum 1D masking logic as
+    :func:`harmonic_correct_dataarray`. Result is clamped to ≥ 0.
+    """
+    laser_nm = read_laser_wavelength_nm(da.attrs)
+    if not should_apply_grating_artifact_cleanup(laser_nm):
+        return da
 
-    out_t = da_t.copy(data=corrected.reshape(da_t.shape))
-    if out_t.dims != orig_order:
-        out_t = out_t.transpose(*orig_order)
-
-    if not all_peaks:
-        return out_t
-
-    meta = {
-        "excitation_laser_nm": laser_nm,
-        "harmonic_peaks_removed_nm": all_peaks,
-    }
-    return with_new_values(out_t, out_t.values, "Laser harmonic removal", meta)
+    return _correct_dataarray_per_spectrum(
+        da,
+        spectral_dim=spectral_dim,
+        laser_nm=laser_nm,
+        notch_row=lambda x, y, wn, fn: remove_grating_artifact_from_spectrum_1d(
+            x, y, wavenumber_axis=wn, laser_wavelength_nm=laser_nm, filename=fn
+        ),
+        stage_label="Grating 2nd-order artifact removal",
+        peaks_key="grating_artifact_peaks_removed_nm",
+    )

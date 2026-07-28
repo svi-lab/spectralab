@@ -29,7 +29,7 @@ X_UNIT_FMT = {
 UNIT_DEFAULT = {
     "RamanShift":   "raman_shift",
     "Wavenumber":   "wavenumber",
-    "Nanometer":    "wavelength",
+    "Nanometer":    "energy",
     "ElectronVolt": "energy",
 }
 
