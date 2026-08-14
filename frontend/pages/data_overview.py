@@ -67,8 +67,13 @@ def _draw_overlay_cached(
 
 
 @st.cache_data(show_spinner=False, max_entries=16)
-def _full_npz_cached(file_hash: str, pipeline_params: dict, _da) -> bytes:
-    return spectra_to_npz(_da)
+def _full_npz_cached(
+    file_hash: str, pipeline_params: dict, _da, excluded_mask=None
+) -> bytes:
+    # excluded_mask is hashed (no underscore prefix) so the payload is rebuilt
+    # when the user edits the mask; pipeline_params carries it too, but only as
+    # part of a dict whose other keys change independently.
+    return spectra_to_npz(_da, excluded_mask)
 
 
 @st.cache_data(show_spinner=False, max_entries=16)
@@ -398,6 +403,8 @@ def _pipeline_export_caption(params: dict | None) -> str:
         stages.append("denoising")
     if params.get("bg_enabled"):
         stages.append("background suppression")
+    if (params.get("excl") or {}).get("masks"):
+        stages.append("manual exclusion (NaN in place — shape preserved)")
     if not stages:
         return "No preprocessing stages enabled — exporting raw data."
     return "Export includes: " + ", ".join(stages) + "."
@@ -411,11 +418,12 @@ def _render_export_card(name: str, file_hash: str, da_final, params: dict) -> No
             st.warning("No exportable data — fix the processing error above.")
             return
         stem = _export_stem(name)
+        excluded_mask = (params.get("excl") or {}).get("masks", {}).get(name)
         btn_cols = st.columns(2 if da_final.ndim > 1 else 1)
         with btn_cols[0]:
             st.download_button(
                 "Full spectra (.npz)",
-                _full_npz_cached(file_hash, params, da_final),
+                _full_npz_cached(file_hash, params, da_final, excluded_mask),
                 file_name=f"{stem}.npz",
                 key=f"export_full_{file_hash}",
             )

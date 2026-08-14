@@ -18,6 +18,11 @@ from spectra_smoother import SpectraSmoother
 from _shared.clean_data import CleanData
 from _shared.normalize import normalize
 from _shared.dataset import SpectralDataset, validate_spectral_dataset
+from _shared._spectral import (
+    resolve_spectral_dim,
+    transpose_spectral_last,
+    with_new_values,
+)
 # Background suppression is currently disabled app-wide — see
 # stage_background_suppress() below. Kept importable for a future re-enable.
 # from background import BackgroundSuppressor
@@ -211,6 +216,64 @@ def stage_denoise(da: xr.DataArray, denoise_params: dict) -> xr.DataArray:
     return _restore_dtype(out, da.dtype)
 
 
+def stage_exclude(
+    da: xr.DataArray,
+    mask: np.ndarray,
+    spectral_dim: str | None = None,
+) -> xr.DataArray:
+    """NaN out manually excluded spectra, preserving the array structure.
+
+    ``mask`` is a boolean array over the *spatial* dims only (True = excluded):
+    ``(n_row, n_col)`` for a map, ``(n_point,)`` for a line scan. Flat index is
+    C-order ``i = r * n_col + c`` — the same convention used by
+    ``_shared._factorization._flatten_to_row_stack``, ``CleanData._handle_3d``
+    and ``_shared.scan_geometry``'s meshgrid ravel.
+
+    Excluded spectra become all-NaN rows *in place*: shape, dims and coords are
+    identical to the input, so the original WDF geometry survives into exports
+    and every index-based downstream analysis. Downstream code already treats
+    all-NaN rows as invalid (PCA, NMF/MCR, fit_map_gaussian, the charts).
+
+    This runs as the final pipeline stage — see ``preprocess`` below and
+    ``frontend/pipeline_cache.py``, which applies it on top of the memoized
+    pre-exclusion result so editing the mask never invalidates the CRR /
+    denoise caches.
+    """
+    sdim = resolve_spectral_dim(da, spectral_dim)
+    da_t, orig_order = transpose_spectral_last(da, sdim)
+    spatial_dims = tuple(d for d in da_t.dims if d != sdim)
+
+    mask = np.asarray(mask, dtype=bool)
+    expected = tuple(da_t.sizes[d] for d in spatial_dims)
+    if mask.shape != expected:
+        raise ValueError(
+            f"exclusion mask shape {mask.shape} does not match the spatial "
+            f"shape {expected} of dims {spatial_dims}"
+        )
+    if not mask.any():
+        return da
+
+    # np.nan is a Python float — np.where would upcast a float32 array, hence
+    # the _restore_dtype below (the no-silent-upcast contract above).
+    values = np.where(mask[..., None], np.nan, np.asarray(da_t.values))
+
+    flat = np.flatnonzero(mask.ravel())
+    out = with_new_values(
+        da_t,
+        values,
+        "Excluded Spectra",
+        {
+            "n_excluded": int(flat.size),
+            "n_total": int(mask.size),
+            "spatial_dims": list(spatial_dims),
+            "flat_indices": flat.tolist(),
+        },
+    )
+    if tuple(out.dims) != orig_order:
+        out = out.transpose(*orig_order)
+    return _restore_dtype(out, da.dtype)
+
+
 # Background suppression is currently disabled app-wide (no UI entry point
 # calls this) — kept for a future re-enable. Fixed here: the reference used
 # to be cast to da.dtype *before* the interpolation branch, so a mismatched-
@@ -281,6 +344,11 @@ def preprocess(
     Non-cached convenience wrapper chaining the stage_* functions — the
     Streamlit app routes through frontend/pipeline_cache.py instead, which
     runs the same sequencing with a per-stage cache between steps.
+
+    Manual exclusion is read from ``params["excl"]["mask"]`` — a single
+    boolean spatial mask, since this entry point processes one dataset. The
+    frontend's equivalent key is ``params["excl"]["masks"]``, a
+    ``{filename: mask}`` dict, because get_finals loops over every loaded file.
     """
     da: xr.DataArray = dataset.da
     stage_records: list[StageRecord] = []
@@ -338,6 +406,12 @@ def preprocess(
     #         if norm_p.get("method"):
     #             da = stage_normalize(da, norm_p)
     #             stage_records.append(("norm_post_bg", "Normalized (post-suppression)", da))
+
+    # ── Manual exclusion (always last) ─────────────────────────────────
+    excl_mask = (params.get("excl") or {}).get("mask")
+    if excl_mask is not None and np.any(excl_mask):
+        da = stage_exclude(da, excl_mask, dataset.spectral_dim)
+        stage_records.append(("excluded", "Excluded", da))
 
     return assemble_dataset(dataset, stage_records, keep_stages=keep_stages)
 

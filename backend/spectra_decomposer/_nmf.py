@@ -65,6 +65,11 @@ def decompose_spectra_nmf(
     The input is reshaped to ``(n_spectra, n_spectral)`` for the fit, then
     reshaped back to the original spatial layout on return.
 
+    All-NaN rows — spectra dropped by Clean Data or excluded by hand — are
+    left out of the fit entirely and come back as NaN in both the
+    reconstruction and the abundances, so an excluded spectrum influences
+    neither the resolved components nor the abundance maps.
+
     Parameters
     ----------
     values
@@ -113,25 +118,41 @@ def decompose_spectra_nmf(
     )
     has_nan = bool(nan_row_mask.any())
 
-    nmf, abundances, converged = _fit_nmf(
-        spectra_for_fit,
+    # Fit on valid rows ONLY. _nonnegative_fit_matrix keeps the row count
+    # intact by median-filling invalid rows so indices stay aligned, but those
+    # filler rows must not shape the resolved components — a spectrum the user
+    # excluded (or Clean Data dropped) would otherwise still pull the fit
+    # toward the population median. Results are scattered back into
+    # full-height arrays afterwards so the spatial layout is preserved.
+    valid_fit = spectra_for_fit[valid_idx]
+    if valid_fit.shape[0] < n_components:
+        raise ValueError(
+            f"n_components ({n_components}) cannot exceed the number of valid "
+            f"(non-NaN) spectra ({valid_fit.shape[0]})"
+        )
+
+    nmf, abundances_valid, converged = _fit_nmf(
+        valid_fit,
         n_components=n_components,
         init=init,
         max_iter=max_iter,
         random_state=random_state,
         nmf_kwargs=nmf_kwargs,
     )
-    reconstructed_rows = nmf.inverse_transform(abundances)
 
     if has_nan:
-        reconstructed_rows = reconstructed_rows.copy()
-        reconstructed_rows[nan_row_mask] = np.nan
-        abundances = abundances.copy()
-        abundances[nan_row_mask] = np.nan
+        abundances = np.full((n_spectra, n_components), np.nan)
+        abundances[valid_idx] = abundances_valid
+        reconstructed_rows = np.full((n_spectra, n_spectral), np.nan)
+        reconstructed_rows[valid_idx] = nmf.inverse_transform(abundances_valid)
+    else:
+        abundances = abundances_valid
+        reconstructed_rows = nmf.inverse_transform(abundances_valid)
 
     reconstructed = reconstructed_rows.reshape(spatial_shape + (n_spectral,))
 
-    valid_fit = spectra_for_fit[valid_idx]
+    # Both terms now come from the same valid-row matrix that was fitted, so
+    # the ratio is self-consistent even when NaN rows are present.
     total_ss = float(np.sum(valid_fit**2)) if valid_idx.any() else 0.0
     fraction_var_explained = (
         1.0 - (nmf.reconstruction_err_**2 / total_ss)
@@ -150,6 +171,9 @@ def decompose_spectra_nmf(
         "reconstruction_err": float(nmf.reconstruction_err_),
         "fraction_var_explained": float(fraction_var_explained),
         "n_spectra": int(n_spectra),
+        # Rows actually fitted — smaller than n_spectra when Clean Data or a
+        # manual exclusion NaN'd spectra out.
+        "n_spectra_valid": int(valid_fit.shape[0]),
         "n_spectral": int(n_spectral),
     }
 

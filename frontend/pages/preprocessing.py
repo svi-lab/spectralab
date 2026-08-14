@@ -11,17 +11,25 @@ Left column (1/3), top to bottom:
     Normalization     — checkpoint multi-select + method. Selection cascades:
                         a later checkpoint auto-selects every earlier one
                         (After Denoising ⇒ After CRR ⇒ Before).
-    Processing Steps  — ONE bordered card with three tabs:
-                        Clean Data | Cosmic Ray Remover | Denoising.
+    Processing Steps  — ONE bordered card with four tabs:
+                        Clean Data | Cosmic Ray Remover | Denoising |
+                        Exclude Spectra.
                         Tabs (not conditional panels) so every stage's widgets
                         render on every rerun and no widget state is lost when
-                        switching views. The Clean Data tab also hosts a small
-                        removal grid (grey = kept, red = removed) rendered into
-                        a placeholder after the pipeline has run.
+                        switching views. Clean Data and Exclude Spectra each
+                        host a small grid (grey = kept, red = auto-removed,
+                        orange = manually excluded) rendered into a placeholder
+                        after the pipeline has run.
 
-Right column (2/3): ``_render_charts_fragment`` — two chart tabs
+Right column (2/3): ``_render_charts_fragment`` — three chart tabs
 (Preprocessing = per-stage progress or multi-file comparison; Final = final
-spectra, comparison or single-file).
+spectra, comparison or single-file; Selection = the interactive pixel picker
+that drives manual exclusion).
+
+The Final tab's single-file view carries a **Show** browser
+(``_render_browse_controls``): all spectra at once, one spectrum stepped
+through with ◀/▶, or a whole map row / column. It only ever ``isel``s the
+already-computed final DataArray, so browsing never re-runs the pipeline.
 
 Session state
 -------------
@@ -29,6 +37,10 @@ Session state
     the assembled pipeline params dict passed to ``get_finals``.
 ``_restore_widget_state`` re-seeds widget keys from it on page entry, since
     st.navigation clears main-content widget state on page transitions.
+``sl_excluded`` (frontend/exclusion.py): per-file manual exclusion masks. It
+    is a plain session key rather than a widget value, so it survives page
+    navigation on its own; ``build_excl_params`` folds it into
+    ``sl_pipeline_params["excl"]`` on every rerun.
 
 Caches
 ------
@@ -73,7 +85,21 @@ from ..controls import (
     render_clean_data_params,
     render_crr_params,
     render_denoising_params,
+    render_map_display_controls,
 )
+from ..exclusion import (
+    apply_selection,
+    build_excl_params,
+    clear_mask,
+    get_mask,
+    has_undo,
+    parse_index_spec,
+    parse_pixel_spec,
+    set_mask,
+    spatial_shape,
+    undo,
+)
+from ..map_chart import make_selection_map_fig
 from ..pipeline_cache import final_da, get_finals, stage_dict
 
 
@@ -289,14 +315,114 @@ def _render_normalization_card() -> tuple[list[str], str | None]:
     return norm_selection or [], norm_method
 
 
+def _render_exclusion_tab(loaded: dict[str, Any]) -> Any:
+    """Manual exclusion controls. Returns the placeholder for the mask grid.
+
+    Editing writes straight into ``sl_excluded`` (frontend/exclusion.py); the
+    caller picks it up via ``build_excl_params`` later in the same rerun, so
+    no callback indirection is needed for the typed inputs. The interactive
+    map lives in the right column's Selection tab and shares the file choice
+    through ``excl_file``.
+    """
+    st.caption(
+        "Drop individual spectra from analysis. Excluded spectra become "
+        "all-NaN in place — the map keeps its original shape, so exports and "
+        "pixel indices are unaffected."
+    )
+
+    names = list(loaded.keys())
+    if len(names) > 1:
+        fname = st.selectbox("File", names, key="excl_file")
+    else:
+        fname = names[0]
+        st.session_state["excl_file"] = fname
+
+    da_raw = loaded[fname]["dataset"].da
+    shape = spatial_shape(da_raw, loaded[fname]["dataset"].spectral_dim)
+    if not shape:
+        st.info("Single spectra have nothing to exclude.")
+        return None
+
+    is_map = len(shape) == 2
+    mask = get_mask(fname, shape)
+
+    # `or "Exclude"`: a single-select segmented control returns None when the
+    # user clicks the already-active segment (deselect), and there is no
+    # meaningful "no mode" state here.
+    mode = st.segmented_control(
+        "Mode", ["Exclude", "Restore"], key="excl_mode", default="Exclude",
+        help="Applies to both the typed indices below and the interactive map.",
+    ) or "Exclude"
+    exclude = mode != "Restore"
+
+    if is_map:
+        n_row, n_col = shape
+        rows_txt = st.text_input(
+            "Rows", key="excl_rows", placeholder="e.g. 0-2, 47",
+            help=f"Whole map rows to {mode.lower()}. Valid: 0–{n_row - 1}.",
+        )
+        cols_txt = st.text_input(
+            "Columns", key="excl_cols", placeholder="e.g. 12, 30-33",
+            help=f"Whole map columns to {mode.lower()}. Valid: 0–{n_col - 1}.",
+        )
+        pixels_txt = st.text_input(
+            "Pixels (row, column)", key="excl_pixels", placeholder="e.g. (4,7), (9,2)",
+        )
+        flat_txt = ""
+    else:
+        n_row, n_col = shape[0], 1
+        rows_txt = cols_txt = pixels_txt = ""
+        flat_txt = st.text_input(
+            "Spectra", key="excl_flat", placeholder="e.g. 0-3, 7, 10-12",
+            help=f"Spectrum indices to {mode.lower()}. Valid: 0–{shape[0] - 1}.",
+        )
+
+    col_apply, col_undo, col_clear = st.columns([2, 1, 1])
+    apply_clicked = col_apply.button(mode, key="excl_apply", width="stretch")
+    undo_clicked = col_undo.button(
+        "Undo", key="excl_undo", width="stretch", disabled=not has_undo(),
+    )
+    clear_clicked = col_clear.button(
+        "Clear", key="excl_clear", width="stretch", disabled=not mask.any(),
+        help="Restore every spectrum of this file.",
+    )
+
+    if apply_clicked:
+        try:
+            rows = parse_index_spec(rows_txt, n_row)
+            cols = parse_index_spec(cols_txt, n_col)
+            pixels = parse_pixel_spec(pixels_txt, n_row, n_col) if pixels_txt.strip() else []
+            flat = parse_index_spec(flat_txt, shape[0])
+        except ValueError as exc:
+            st.error(str(exc))
+        else:
+            if rows or cols or pixels or flat:
+                set_mask(fname, apply_selection(
+                    mask, rows=rows, cols=cols, pixels=pixels, flat=flat, exclude=exclude,
+                ))
+                st.rerun()
+            else:
+                st.warning("Nothing to apply — fill in at least one field.")
+
+    if undo_clicked and undo():
+        st.rerun()
+    if clear_clicked:
+        clear_mask(fname, shape)
+        st.rerun()
+
+    # Filled by _render_excl_visual once the pipeline has run.
+    return st.container()
+
+
 def _render_stage_tabs(
     processing_ok: bool,
-) -> tuple[dict[str, Any], Any]:
-    """One bordered card with the three processing steps as tabs.
+    loaded: dict[str, Any],
+) -> tuple[dict[str, Any], Any, Any]:
+    """One bordered card with the four processing steps as tabs.
 
-    Returns (stage_params, cd_visual_slot). ``cd_visual_slot`` is an empty
-    container inside the Clean Data tab (None when Clean Data is off) that
-    the page fills with the removal grid after the pipeline has run.
+    Returns (stage_params, cd_visual_slot, excl_visual_slot). Each slot is an
+    empty container inside its tab (None when that step is off) that the page
+    fills with a removal grid after the pipeline has run.
     """
     _pl_info = (
         "Requires PL data (Nanometer or ElectronVolt). "
@@ -306,8 +432,8 @@ def _render_stage_tabs(
 
     with st.container(border=True):
         st.markdown('<p class="section-header">Processing Steps</p>', unsafe_allow_html=True)
-        tab_cd, tab_crr, tab_dn = st.tabs(
-            ["Clean Data", "Cosmic Ray Remover", "Denoising"]
+        tab_cd, tab_crr, tab_dn, tab_excl = st.tabs(
+            ["Clean Data", "Cosmic Ray Remover", "Denoising", "Exclude Spectra"]
         )
 
         # ── Clean Data ────────────────────────────────────────────────────
@@ -363,26 +489,32 @@ def _render_stage_tabs(
             if denoise_enabled:
                 denoise_params = render_denoising_params()
 
+        # ── Exclude Spectra ───────────────────────────────────────────────
+        with tab_excl:
+            excl_visual_slot = _render_exclusion_tab(loaded)
+
     stage_params = {
         "cd_enabled":      cd_enabled,      "cd":      cd_params,
         "crr_enabled":     crr_enabled,     "crr":     crr_params,
         "denoise_enabled": denoise_enabled, "denoise": denoise_params,
     }
-    return stage_params, cd_visual_slot
+    return stage_params, cd_visual_slot, excl_visual_slot
 
 
 def _render_preprocessing_params(
     processing_ok: bool, loaded: dict, ds_name: str
-) -> tuple[dict[str, Any], Any]:
-    """Render the left-column cards; return (pipeline_params, cd_visual_slot).
+) -> tuple[dict[str, Any], Any, Any]:
+    """Render the left-column cards; return (pipeline_params, cd_slot, excl_slot).
 
-    ``loaded`` / ``ds_name`` are unused while background suppression is
-    disabled (its reference resolution needs them) — kept in the signature
-    for the future re-enable.
+    ``ds_name`` is unused while background suppression is disabled (its
+    reference resolution needs it) — kept in the signature for the future
+    re-enable.
     """
     _render_quick_setup(processing_ok)
     norm_selection, norm_method = _render_normalization_card()
-    stage_params, cd_visual_slot = _render_stage_tabs(processing_ok)
+    stage_params, cd_visual_slot, excl_visual_slot = _render_stage_tabs(
+        processing_ok, loaded
+    )
 
     # Background suppression is currently disabled app-wide — see the
     # section at the bottom of this file for the original controls.
@@ -397,15 +529,20 @@ def _render_preprocessing_params(
         **stage_params,
         "bg_enabled": bg_enabled,
         "bg":         bg_pipeline,
+        # Read from sl_excluded, which the Exclude tab and the Selection chart
+        # have already updated by this point in the rerun.
+        "excl":       build_excl_params(loaded),
     }
-    return pipeline_params, cd_visual_slot
+    return pipeline_params, cd_visual_slot, excl_visual_slot
 
 
 # ───────────────────── Clean Data removed-spectra visual ───────────────────
 
 
-_CD_KEPT_RGB    = np.array([232, 234, 237], dtype=np.uint8)  # light grey
-_CD_REMOVED_RGB = np.array([217,  48,  37], dtype=np.uint8)  # red
+_CD_KEPT_RGB     = np.array([232, 234, 237], dtype=np.uint8)  # 0 — light grey, kept
+_CD_REMOVED_RGB  = np.array([217,  48,  37], dtype=np.uint8)  # 1 — red, auto-removed
+_CD_EXCLUDED_RGB = np.array([245, 158,  11], dtype=np.uint8)  # 2 — orange, user-excluded
+_CD_PALETTE = np.stack([_CD_KEPT_RGB, _CD_REMOVED_RGB, _CD_EXCLUDED_RGB])
 _CD_GRID_MAX_PX = 360   # target image width in px
 _CD_WRAP_COLS   = 50    # line scans wrap into rows this wide
 _CD_MAX_LISTED  = 12    # list removed indices explicitly up to this many
@@ -424,18 +561,25 @@ def _cd_removed_mask(da, spectral_dim: str) -> np.ndarray:
     return np.all(np.isnan(da.values), axis=-1)
 
 
-def _removal_grid_rgb(mask: np.ndarray, valid: np.ndarray | None = None) -> np.ndarray:
-    """Small RGB indicator image from a 2-D removal mask (True = removed).
+def _removal_grid_rgb(categories: np.ndarray, valid: np.ndarray | None = None) -> np.ndarray:
+    """Small RGB indicator image from a 2-D category grid.
+
+    ``categories`` is 0 = kept, 1 = auto-removed (Clean Data), 2 = manually
+    excluded — or a plain bool mask, which maps to kept/auto-removed so the
+    Clean Data callers stay unchanged.
 
     ``valid`` marks real cells (padding from line-scan wrapping renders
     white). Cells are upscaled with ``np.kron`` to stay readable; thin white
     grid lines separate cells when they are large enough.
     """
-    rgb = np.where(mask[..., None], _CD_REMOVED_RGB, _CD_KEPT_RGB)
+    cat = np.asarray(categories)
+    if cat.dtype == bool:
+        cat = cat.astype(np.uint8)
+    rgb = _CD_PALETTE[cat]
     if valid is not None:
         rgb = rgb.copy()
         rgb[~valid] = 255
-    nx = mask.shape[1]
+    nx = cat.shape[1]
     cell = int(np.clip(_CD_GRID_MAX_PX // max(nx, 1), 2, 14))
     img = np.kron(rgb, np.ones((cell, cell, 1), dtype=np.uint8))
     if cell >= 4:
@@ -502,6 +646,56 @@ def _render_cd_removed_visual(slot, all_datasets: dict, loaded: dict[str, Any]) 
                     f"{label}{n_removed} / {total} map pixels NaN-filled "
                     "(shown in red, map layout)."
                 )
+
+
+def _excl_categories(
+    user_mask: np.ndarray, final_nan: np.ndarray
+) -> np.ndarray:
+    """Category grid for the exclusion readout: 0 kept, 1 auto-removed, 2 excluded.
+
+    ``final_nan`` is every all-NaN spectrum in the final result, which is the
+    union of Clean Data's removals and the user's — so anything NaN that the
+    user did not pick came from an automatic stage.
+    """
+    cat = np.zeros(user_mask.shape, dtype=np.uint8)
+    cat[final_nan & ~user_mask] = 1
+    cat[user_mask] = 2
+    return cat
+
+
+def _render_excl_visual(slot, all_datasets: dict, loaded: dict[str, Any]) -> None:
+    """Fill the Exclude tab's placeholder with the mask grid for the chosen file."""
+    fname = st.session_state.get("excl_file")
+    if fname not in all_datasets:
+        return
+    da_final = final_da(all_datasets[fname])
+    spectral_dim = loaded[fname]["dataset"].spectral_dim
+    shape = spatial_shape(da_final, spectral_dim)
+    if not shape:
+        return
+
+    user_mask = get_mask(fname, shape)
+    final_nan = _cd_removed_mask(da_final, spectral_dim)
+    n_user = int(user_mask.sum())
+    n_auto = int((final_nan & ~user_mask).sum())
+    total = int(user_mask.size)
+
+    with slot:
+        cat = _excl_categories(user_mask, final_nan)
+        if cat.ndim == 1:
+            grid, valid = _wrap_line_mask(cat.astype(bool))
+            # _wrap_line_mask pads a bool mask; re-pad the categories the same way.
+            padded = np.zeros(grid.size, dtype=np.uint8)
+            padded[:cat.size] = cat
+            st.image(_removal_grid_rgb(padded.reshape(grid.shape), valid))
+            st.caption("Index runs left→right, top→bottom.")
+        else:
+            st.image(_removal_grid_rgb(cat))
+
+        parts = [f"**{n_user}** excluded"]
+        if n_auto:
+            parts.append(f"{n_auto} auto-removed")
+        st.caption(f"{' · '.join(parts)} / {total} spectra.")
 
 
 # ───────────────────────── Right column: chart tabs ────────────────────────
@@ -612,6 +806,112 @@ def _render_progress_tab(
     st_echarts(opts, height="72vh", key="progress_chart")
 
 
+_BROWSE_ALL  = "All spectra"
+_BROWSE_ONE  = "Single spectrum"
+_BROWSE_ROW  = "Row"
+_BROWSE_COL  = "Column"
+_BROWSE_MODES_MAP  = [_BROWSE_ALL, _BROWSE_ONE, _BROWSE_ROW, _BROWSE_COL]
+_BROWSE_MODES_LINE = [_BROWSE_ALL, _BROWSE_ONE]
+
+
+def _clamp_index_state(key: str, n: int) -> None:
+    """Keep a stepper's stored index inside [0, n-1].
+
+    Needed because the index widgets outlive the file they were set for: a
+    switch to a smaller map (or a different scan geometry) would otherwise hand
+    st.number_input a value above its own max and raise.
+    """
+    if key not in st.session_state:
+        return
+    try:
+        st.session_state[key] = int(np.clip(int(st.session_state[key]), 0, max(n - 1, 0)))
+    except (TypeError, ValueError):
+        del st.session_state[key]
+
+
+def _step_index(key: str, delta: int, n: int) -> None:
+    st.session_state[key] = int(
+        np.clip(int(st.session_state.get(key, 0)) + delta, 0, max(n - 1, 0))
+    )
+
+
+def _index_stepper(cols, label: str, key: str, n: int) -> int:
+    """◀ / value / ▶ index picker rendered into three pre-made columns.
+
+    The columns are passed in rather than created here: this widget already
+    lives inside the page's right column, and Streamlit allows only one level
+    of column nesting in the main area.
+    """
+    _clamp_index_state(key, n)
+    cur = int(st.session_state.get(key, 0))
+    c_prev, c_val, c_next = cols
+    c_prev.button(
+        "◀", key=f"{key}_prev", width="stretch", disabled=cur <= 0,
+        on_click=_step_index, args=(key, -1, n),
+    )
+    val = c_val.number_input(
+        label, min_value=0, max_value=max(n - 1, 0), step=1, key=key,
+    )
+    c_next.button(
+        "▶", key=f"{key}_next", width="stretch", disabled=cur >= n - 1,
+        on_click=_step_index, args=(key, +1, n),
+    )
+    return int(val)
+
+
+def _render_browse_controls(da) -> tuple[Any, str, str]:
+    """Browse picker for the Final tab: one spectrum, one row or one column.
+
+    Returns ``(subset, mode, label)`` — ``subset`` is a view of ``da`` (1-D for
+    a single spectrum, 2-D for a row/column), ``label`` names the selection for
+    the chart title and caption. In ``All spectra`` mode the array is returned
+    untouched and ``label`` is empty.
+    """
+    spectral_dim = da.dims[-1]
+    spatial = [d for d in da.dims if d != spectral_dim]
+    if not spatial:
+        return da, _BROWSE_ALL, ""
+
+    modes = _BROWSE_MODES_MAP if len(spatial) == 2 else _BROWSE_MODES_LINE
+    if st.session_state.get("final_browse_mode") not in modes:
+        st.session_state.pop("final_browse_mode", None)
+    mode = st.segmented_control(
+        "Show", modes, key="final_browse_mode", default=_BROWSE_ALL,
+        help=(
+            "Step through the map one spectrum at a time, or plot a single "
+            "map row / column. Indices are the same ones the Exclude Spectra "
+            "tab uses."
+        ),
+    ) or _BROWSE_ALL
+
+    if mode == _BROWSE_ALL:
+        return da, mode, ""
+
+    if len(spatial) == 1:
+        n = int(da.sizes[spatial[0]])
+        cols = st.columns([1, 3, 1, 8], vertical_alignment="bottom")
+        i = _index_stepper(cols[:3], "Spectrum", "final_browse_i", n)
+        return da.isel({spatial[0]: i}), mode, f"spectrum {i}"
+
+    n_row, n_col = int(da.sizes[spatial[0]]), int(da.sizes[spatial[1]])
+
+    if mode == _BROWSE_ONE:
+        cols = st.columns([1, 3, 1, 1, 3, 1, 2], vertical_alignment="bottom")
+        r = _index_stepper(cols[:3], "Row", "final_browse_row", n_row)
+        c = _index_stepper(cols[3:6], "Column", "final_browse_col", n_col)
+        subset = da.isel({spatial[0]: r, spatial[1]: c})
+        return subset, mode, f"pixel ({r}, {c}) · flat index {r * n_col + c}"
+
+    if mode == _BROWSE_ROW:
+        cols = st.columns([1, 3, 1, 8], vertical_alignment="bottom")
+        r = _index_stepper(cols[:3], "Row", "final_browse_row", n_row)
+        return da.isel({spatial[0]: r}), mode, f"row {r} ({n_col} spectra)"
+
+    cols = st.columns([1, 3, 1, 8], vertical_alignment="bottom")
+    c = _index_stepper(cols[:3], "Column", "final_browse_col", n_col)
+    return da.isel({spatial[1]: c}), mode, f"column {c} ({n_row} spectra)"
+
+
 def _render_final_tab(
     all_datasets: dict,
     loaded: dict[str, Any],
@@ -653,17 +953,7 @@ def _render_final_tab(
             selected = next(iter(all_datasets))
 
         sel_ds: SpectralDataset = loaded[selected]["dataset"]
-        da_sel = final_da(all_datasets[selected])
-
-        n_spectra = int(da_sel.size // da_sel.shape[-1]) if da_sel.ndim > 1 else 1
-        if n_spectra > 5000:
-            st.warning(
-                f"Large dataset ({n_spectra} spectra). "
-                "Only a subset of spectra is drawn in index mode "
-                "(display is also downsampled to ~1,200 points/spectrum along "
-                "the spectral axis). Exports and analysis stay full-resolution.",
-                icon="⚠️",
-            )
+        da_full = final_da(all_datasets[selected])
 
         ctl1, ctl2 = st.columns([2, 2])
         color_by = ctl1.selectbox(
@@ -677,19 +967,171 @@ def _render_final_tab(
         )
         chart_title = ctl2.text_input("Chart title", value=selected, key="fin_single_title")
 
+        da_sel, browse_mode, browse_label = _render_browse_controls(da_full)
+
+        n_spectra = int(da_sel.size // da_sel.shape[-1]) if da_sel.ndim > 1 else 1
+        if browse_mode == _BROWSE_ALL and n_spectra > 5000:
+            st.warning(
+                f"Large dataset ({n_spectra} spectra). "
+                "Only a subset of spectra is drawn in index mode "
+                "(display is also downsampled to ~1,200 points/spectrum along "
+                "the spectral axis). Exports and analysis stay full-resolution. "
+                "Use **Show** above to step through spectra individually.",
+                icon="⚠️",
+            )
+
         x_unit, laser = render_axis_controls(
             "fin_single",
             sel_ds.laser_nm,
             native_type=sel_ds.spectral_units,
         )
-        st_echarts(
-            _make_final_echarts_cached(
+
+        # Every spectrum of the selection is all-NaN — Clean Data dropped it or
+        # the user excluded it. NaN is not valid JSON, so there is no chart to
+        # draw; say which it is instead of rendering an empty axis.
+        n_valid = int(np.sum(~np.all(np.isnan(da_sel.values.reshape(-1, da_sel.shape[-1])), axis=1)))
+        if n_valid == 0:
+            st.info(
+                f"Nothing to plot — {browse_label or 'this file'} is entirely "
+                "removed (Clean Data) or manually excluded."
+            )
+            return
+
+        if browse_mode == _BROWSE_ALL:
+            opts = _make_final_echarts_cached(
                 loaded[selected]["hash"], pipeline_params, da_sel, chart_title,
                 color_by,
                 x_unit, laser, sel_ds.spectral_unit, sel_ds.spectral_units,
-            ),
-            height="72vh", key="final_single",
+            )
+        else:
+            # Subsets are one row/column/pixel — cheap enough to build eagerly,
+            # and the cache key would need the browse indices folded in.
+            opts = make_final_echarts(
+                da_sel, title=f"{chart_title} — {browse_label}", color_by=color_by,
+                x_unit=x_unit, laser_nm=laser,
+                src_unit=sel_ds.spectral_unit, native_type=sel_ds.spectral_units,
+            )
+            skipped = n_spectra - n_valid
+            st.caption(
+                f"Showing {browse_label}"
+                + (f" · {skipped} removed/excluded spectra not drawn" if skipped else "")
+            )
+
+        st_echarts(opts, height="72vh", key="final_single")
+
+
+def _pre_exclusion_da(ds) -> Any:
+    """The final stage *before* manual exclusion, or the final stage itself.
+
+    The selection map needs the un-excluded data underneath: showing the
+    masked result would punch holes exactly where the user has to click to
+    restore a spectrum.
+    """
+    if ds.attrs.get("final_var") != "excluded":
+        return final_da(ds)
+    stored = [v for v in ds.attrs["stage_vars"] if v in ds.data_vars and v != "excluded"]
+    return ds[stored[-1]] if stored else final_da(ds)
+
+
+@st.cache_data(show_spinner=False, max_entries=8)
+def _selection_z_cached(file_hash: str, base_params: dict, _da) -> np.ndarray:
+    """Integrated intensity behind the selection map.
+
+    Keyed on the params *without* the exclusion mask — the underlying array is
+    the pre-exclusion one, so it must not be recomputed on every mask edit.
+    """
+    return _da.sum(_da.dims[-1], min_count=1).values
+
+
+def _selected_flat_indices(points: list[dict], n_col: int) -> list[int]:
+    """Flat C-order pixel indices from a Plotly selection payload.
+
+    The scatter layer is curve 1 and covers every pixel in row-major order, so
+    ``point_index`` already is the flat index; ``customdata`` carries (row,
+    column) as the authoritative cross-check.
+    """
+    out: list[int] = []
+    for p in points:
+        if p.get("curve_number") not in (None, 1):
+            continue
+        cd = p.get("customdata")
+        if isinstance(cd, (list, tuple)) and len(cd) >= 2:
+            out.append(int(cd[0]) * n_col + int(cd[1]))
+            continue
+        i = p.get("point_index", p.get("point_number"))
+        if i is not None:
+            out.append(int(i))
+    return out
+
+
+def _render_selection_tab(
+    all_datasets: dict, loaded: dict[str, Any], pipeline_params: dict[str, Any],
+) -> None:
+    """Interactive pixel picker — click / box / lasso to exclude or restore."""
+    fname = st.session_state.get("excl_file") or next(iter(all_datasets), None)
+    if fname not in all_datasets:
+        st.info("Select a file in the Exclude Spectra tab.")
+        return
+
+    ds_meta: SpectralDataset = loaded[fname]["dataset"]
+    if not ds_meta.is_map:
+        st.info(
+            "Interactive selection needs a raster map. For line scans and "
+            "series, use the index fields in the Exclude Spectra tab."
         )
+        return
+
+    da_ctx = _pre_exclusion_da(all_datasets[fname])
+    spectral_dim = ds_meta.spectral_dim
+    shape = spatial_shape(da_ctx, spectral_dim)
+    n_row, n_col = shape
+
+    mode = st.session_state.get("excl_mode") or "Exclude"
+    exclude = mode != "Restore"
+    st.caption(
+        f"Mode: **{mode}** — drag a box, lasso a region, or click one pixel. "
+        "Change the mode in the Exclude Spectra tab. Double-click clears the selection."
+    )
+    if n_row * n_col > 100_000:
+        st.caption(
+            f"⚠ {n_row * n_col:,} pixels — the picker may feel sluggish; "
+            "the index fields are faster for bulk edits."
+        )
+
+    base_params = {k: v for k, v in pipeline_params.items() if k != "excl"}
+    z = _selection_z_cached(loaded[fname]["hash"], base_params, da_ctx)
+
+    user_mask = get_mask(fname, shape)
+    auto_mask = _cd_removed_mask(da_ctx, spectral_dim)
+
+    colorscale, map_opacity = render_map_display_controls("excl")
+    fig = make_selection_map_fig(
+        z, da_ctx.coords[da_ctx.dims[0]].values, da_ctx.coords[da_ctx.dims[1]].values,
+        ds_meta.image_arr, ds_meta.image_meta, user_mask, auto_mask,
+        colorscale=colorscale, title=fname, map_opacity=map_opacity,
+    )
+    event = st.plotly_chart(
+        fig, on_select="rerun", selection_mode=("points", "box", "lasso"),
+        key="excl_map", width="stretch", height=600,
+    )
+
+    points = ((event or {}).get("selection") or {}).get("points") or []
+    idx = _selected_flat_indices(points, n_col)
+    # Streamlit keeps the selection in session state across reruns, so the
+    # same payload arrives again on every subsequent rerun — apply each
+    # distinct (file, mode, selection) exactly once.
+    signature = (fname, mode, tuple(idx))
+    if idx and st.session_state.get("_excl_last_selection") != signature:
+        st.session_state["_excl_last_selection"] = signature
+        set_mask(fname, apply_selection(user_mask, flat=idx, exclude=exclude))
+        # scope="app": this fragment owns the chart, but the left column
+        # rebuilds sl_pipeline_params and the other tabs read the new mask.
+        st.rerun(scope="app")
+
+    st.caption(
+        f"{int(user_mask.sum())} excluded · {int((auto_mask & ~user_mask).sum())} "
+        f"auto-removed · {n_row * n_col} total"
+    )
 
 
 @st.fragment
@@ -700,17 +1142,19 @@ def _render_charts_fragment(
     multi: bool,
     ref_ds: SpectralDataset,
 ) -> None:
-    """Fragment that owns both chart tabs.
+    """Fragment that owns the chart tabs.
 
     Creating st.tabs() inside the fragment (rather than passing tab objects
     in from outside) is required by Streamlit's fragment contract: fragments
     may only render into containers they create themselves.
     """
-    tab_prog, tab_final = st.tabs(["Preprocessing", "Final"])
+    tab_prog, tab_final, tab_sel = st.tabs(["Preprocessing", "Final", "Selection"])
     with tab_prog:
         _render_progress_tab(all_datasets, loaded, pipeline_params, multi, ref_ds)
     with tab_final:
         _render_final_tab(all_datasets, loaded, pipeline_params, multi, ref_ds)
+    with tab_sel:
+        _render_selection_tab(all_datasets, loaded, pipeline_params)
 
 
 # ────────────────────────────── Page assembly ──────────────────────────────
@@ -736,7 +1180,7 @@ def render_preprocessing_page() -> None:
     target_name = next(iter(loaded))
 
     with left:
-        pipeline_params, cd_visual_slot = _render_preprocessing_params(
+        pipeline_params, cd_visual_slot, excl_visual_slot = _render_preprocessing_params(
             processing_ok, loaded, target_name
         )
         st.session_state["sl_pipeline_params"] = pipeline_params
@@ -753,10 +1197,12 @@ def render_preprocessing_page() -> None:
 
         _render_charts_fragment(all_datasets, loaded, pipeline_params, multi, ref_ds)
 
-    # Fill the Clean Data tab's placeholder now that the pipeline has run.
-    # Outside the charts fragment, so fragment-only reruns leave it intact.
+    # Fill the Clean Data / Exclude tab placeholders now that the pipeline has
+    # run. Outside the charts fragment, so fragment-only reruns leave them intact.
     if cd_visual_slot is not None:
         _render_cd_removed_visual(cd_visual_slot, all_datasets, loaded)
+    if excl_visual_slot is not None:
+        _render_excl_visual(excl_visual_slot, all_datasets, loaded)
 
 
 # ──────────── Disabled: background suppression (kept for re-enable) ────────

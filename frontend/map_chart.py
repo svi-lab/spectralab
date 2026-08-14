@@ -212,6 +212,91 @@ def make_scalar_map_fig(
     return fig
 
 
+# Marker colours for the selection map. Kept pixels are near-transparent so
+# the intensity heatmap underneath stays readable; excluded ones are opaque.
+_SEL_KEPT_RGBA     = "rgba(255,255,255,0.06)"
+_SEL_EXCLUDED_RGBA = "rgba(217,48,37,0.95)"    # red   — user-excluded
+_SEL_AUTO_RGBA     = "rgba(120,120,120,0.85)"  # grey  — Clean Data removed
+
+
+def make_selection_map_fig(
+    z: np.ndarray,
+    row_coords: np.ndarray,
+    col_coords: np.ndarray,
+    image_arr: np.ndarray | None,
+    image_meta: dict | None,
+    excluded_mask: np.ndarray,
+    auto_removed_mask: np.ndarray | None = None,
+    *,
+    colorscale: str = "Viridis",
+    title: str = "",
+    map_opacity: float = 0.75,
+) -> go.Figure:
+    """Pixel-pickable map: intensity heatmap + one selectable marker per pixel.
+
+    ``go.Heatmap`` does not participate in Plotly box/lasso selection, so the
+    heatmap is context only (``hoverinfo="skip"``) and a single ``Scattergl``
+    trace of pixel centres carries the interaction. Keeping it to *one* trace
+    covering *every* pixel is what makes ``point_index`` identical to the
+    C-order flat index used everywhere else (see frontend/exclusion.py), so a
+    selection maps back to a spectrum without a coordinate lookup.
+
+    Parameters
+    ----------
+    z:
+        2-D ``(n_row, n_col)`` scalar shown underneath (integrated intensity).
+    excluded_mask:
+        2-D bool, True = manually excluded — drawn red.
+    auto_removed_mask:
+        2-D bool, True = already NaN before exclusion (Clean Data) — drawn
+        grey, so the user can tell automatic from manual removals.
+    """
+    if image_arr is None or image_meta is None:
+        map_opacity = 1.0
+
+    n_row, n_col = int(z.shape[0]), int(z.shape[1])
+    excluded = np.asarray(excluded_mask, dtype=bool).ravel()
+    auto = (
+        np.zeros(n_row * n_col, dtype=bool)
+        if auto_removed_mask is None
+        else np.asarray(auto_removed_mask, dtype=bool).ravel()
+    )
+
+    # Full meshgrid, row-major (y outer, x inner) — the same ravel order as
+    # z.reshape(-1) and _shared.scan_geometry, so index i is pixel
+    # (i // n_col, i % n_col).
+    xs, ys = np.meshgrid(np.asarray(col_coords), np.asarray(row_coords))
+    r_idx, c_idx = np.divmod(np.arange(n_row * n_col), n_col)
+
+    colors = np.full(n_row * n_col, _SEL_KEPT_RGBA, dtype=object)
+    colors[auto] = _SEL_AUTO_RGBA
+    colors[excluded] = _SEL_EXCLUDED_RGBA  # manual wins: it is what's editable
+
+    fig = go.Figure()
+    fig.add_trace(go.Heatmap(
+        x=col_coords, y=row_coords, z=z,
+        opacity=map_opacity, colorscale=colorscale, showscale=False,
+        hoverinfo="skip", zsmooth=False,
+    ))
+    fig.add_trace(go.Scattergl(
+        x=xs.ravel(), y=ys.ravel(),
+        mode="markers",
+        marker=dict(
+            size=int(np.clip(600 // max(n_row, n_col, 1), 3, 14)),
+            color=colors.tolist(),
+            line=dict(width=0),
+        ),
+        customdata=np.column_stack([r_idx, c_idx]),
+        hovertemplate="row %{customdata[0]}, col %{customdata[1]}<extra></extra>",
+        showlegend=False,
+        unselected=dict(marker=dict(opacity=1.0)),  # selection must not dim the rest
+    ))
+    _add_image_overlay(fig, image_arr, image_meta)
+    _apply_map_layout(fig, title, "")
+    fig.update_layout(dragmode="select", margin=dict(t=80, l=70, r=40, b=60))
+    return fig
+
+
 def make_map_fig(
     da: xr.DataArray,
     image_arr: np.ndarray | None,

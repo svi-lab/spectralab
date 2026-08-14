@@ -227,6 +227,8 @@ def mcr_als(
             f"({n_spectra})"
         )
 
+    # Only D_valid is ever fitted — see the ALS loop below for why the
+    # median-filled invalid rows must stay out of both half-steps.
     D_full, per_spec_min, nan_row_mask, valid_idx = _nonnegative_fit_matrix(row_stack)
     has_nan = bool(nan_row_mask.any())
     D_valid = D_full[valid_idx]
@@ -259,16 +261,21 @@ def mcr_als(
     lof_prev = np.inf
     lof = np.nan
     converged = False
-    C = np.zeros((n_spectra, n_components))
+    # Both ALS half-steps run on D_valid only. _nonnegative_fit_matrix keeps
+    # the row count intact by median-filling invalid rows so indices stay
+    # aligned, but solving S against those filler rows would let a spectrum
+    # that Clean Data dropped — or that the user excluded by hand — shape the
+    # resolved pure spectra. C is scattered back to full height at the end.
+    C_valid = np.zeros((D_valid.shape[0], n_components))
     n_iter = 0
     for it in range(1, int(max_iter) + 1):
         n_iter = it
-        C = _solve_C(D_full, S)
-        S = _solve_S(D_full, C)
+        C_valid = _solve_C(D_valid, S)
+        S = _solve_S(D_valid, C_valid)
         if use_equality:
             S[equality_index] = eq
 
-        resid = D_valid - (C[valid_idx] @ S)
+        resid = D_valid - (C_valid @ S)
         lof = 100.0 * np.sqrt(float(np.sum(resid**2)) / d_sq) if d_sq > 0 else 0.0
         if progress_callback is not None:
             progress_callback(it, int(max_iter))
@@ -281,19 +288,21 @@ def mcr_als(
     norms = np.linalg.norm(S, axis=1)
     norms_safe = np.where(norms > 0, norms, 1.0)
     S = S / norms_safe[:, None]
-    C = C * norms_safe[None, :]
+    C_valid = C_valid * norms_safe[None, :]
 
-    reconstructed_rows = C @ S
     if has_nan:
-        reconstructed_rows = reconstructed_rows.copy()
-        reconstructed_rows[nan_row_mask] = np.nan
-        C = C.copy()
-        C[nan_row_mask] = np.nan
+        C = np.full((n_spectra, n_components), np.nan)
+        C[valid_idx] = C_valid
+        reconstructed_rows = np.full((n_spectra, n_spectral), np.nan)
+        reconstructed_rows[valid_idx] = C_valid @ S
+    else:
+        C = C_valid
+        reconstructed_rows = C_valid @ S
 
     reconstructed = reconstructed_rows.reshape(spatial_shape + (n_spectral,))
 
     fraction_var_explained = (
-        1.0 - (float(np.sum((D_valid - (C[valid_idx] @ S)) ** 2)) / d_sq)
+        1.0 - (float(np.sum((D_valid - (C_valid @ S)) ** 2)) / d_sq)
         if d_sq > 0
         else float("nan")
     )
@@ -314,6 +323,9 @@ def mcr_als(
         "max_iter": int(max_iter),
         "simplisma_offset": float(simplisma_offset),
         "n_spectra": int(n_spectra),
+        # Rows actually fitted — smaller than n_spectra when Clean Data or a
+        # manual exclusion NaN'd spectra out.
+        "n_spectra_valid": int(D_valid.shape[0]),
         "n_spectral": int(n_spectral),
     }
 

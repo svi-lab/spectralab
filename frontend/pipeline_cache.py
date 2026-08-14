@@ -47,13 +47,33 @@ The two layers serve different reuse patterns and both stay:
     ran — new digest, memo miss, but the expensive stages still hit their own
     cache since their own upstream recipe didn't change).
 
+Manual exclusion
+----------------
+The user's per-file exclusion mask (frontend/exclusion.py) arrives in
+`params["excl"]["masks"]` but is deliberately kept OUT of the params digest.
+Instead the digest is built from every *other* param, and the mask contributes
+a separate `mask_digest` tag appended to that base:
+
+    memo key = (file_hash, base_digest + mask_tag, keep_stages)
+
+Two reasons. First, the digest stays per-file: editing one file's mask cannot
+invalidate another file's memo entry (the params dict is global and shared by
+every page). Second, and more importantly, `stage_exclude` is applied *on top
+of* the memoized pre-exclusion Dataset (key `base_digest`, mask_tag = "")
+rather than by re-running the stage chain — so a mask edit never reaches
+`_crr_cached` / `_denoise_cached` and never pays their unpickle, let alone a
+recompute. Each edit costs exactly one `np.where` copy of the final array, for
+the edited file only. Files with an empty mask produce an empty tag and hit
+precisely the key they would have had before this feature existed.
+
 **Immutability contract**: memo'd Datasets are shared references, handed out
 to every page that asks for the same (file, params) combo in the same
 rerun. This relies on the codebase-wide invariant that every stage function
 returns a *new* DataArray rather than mutating its input in place (already
 true of every `stage_*` function here and every backend transform they
 call) — no consumer may write into a Dataset/DataArray it got from
-`get_finals`.
+`get_finals`. `_apply_exclusion` is held to the same rule: it copies the
+attrs dicts it extends rather than mutating the pre-exclusion Dataset's.
 """
 
 from __future__ import annotations
@@ -71,9 +91,11 @@ from backend.pipeline import (
     stage_clean_data,
     stage_cosmic_ray_removal,
     stage_denoise,
+    stage_exclude,
     stage_normalize,
 )
 from backend._shared.dataset import SpectralDataset
+from .exclusion import mask_digest
 
 # CRR/denoise cache budget. Each retained entry is a full-size array (~150 MB
 # for a 2000-spectra x 9341-channel float64 map). Must be >= the number of
@@ -89,8 +111,14 @@ _STAGE_MAX_ENTRIES = 16
 # keep_stages=True bucket — used by Preprocessing's Progress tab, the one
 # page most likely to have several files loaded — evicts and recomputes in
 # rotation within a single get_finals() call.
+#
+# A file with an exclusion mask occupies TWO entries per bucket (the
+# mask-independent pre-exclusion result and the masked one), so the caps are
+# 2x the target file count rather than 1x — otherwise masking a few files
+# evicts the pre-exclusion entries they are built from, and every rerun pays
+# a full stage-chain re-run to rebuild them.
 _FINALS_MEMO_KEY = "_sl_finals_memo"
-_FINALS_MEMO_CAPS: dict[bool, int] = {False: 8, True: 8}
+_FINALS_MEMO_CAPS: dict[bool, int] = {False: 16, True: 16}
 
 
 def default_pipeline_params() -> dict[str, Any]:
@@ -103,6 +131,7 @@ def default_pipeline_params() -> dict[str, Any]:
         "denoise_enabled": False, "denoise": {},
         "norm3_enabled": False, "norm3": {},
         "bg_enabled":    False, "bg":    {},
+        "excl":          {},
     }
 
 
@@ -283,6 +312,72 @@ def _final_only_view(full_ds: xr.Dataset) -> xr.Dataset:
     return ds
 
 
+def _apply_exclusion(
+    ds_pre: xr.Dataset,
+    mask: np.ndarray,
+    spectral_dim: str,
+    keep_stages: bool,
+) -> xr.Dataset:
+    """Append the manual-exclusion stage on top of a pre-exclusion Dataset.
+
+    Deliberately NOT part of `_run_stage_chain`: the whole point is to build on
+    the memoized pre-exclusion result so a mask edit never touches the CRR /
+    denoise caches (see the module docstring).
+
+    `ds_pre` is a shared memo reference — its attrs dicts are copied, never
+    extended in place.
+    """
+    masked = stage_exclude(ds_pre[ds_pre.attrs["final_var"]], mask, spectral_dim)
+
+    ds = ds_pre.assign({"excluded": masked}) if keep_stages else xr.Dataset({"excluded": masked})
+    ds.attrs["stage_vars"] = [*ds_pre.attrs["stage_vars"], "excluded"]
+    ds.attrs["stage_labels"] = {**ds_pre.attrs["stage_labels"], "excluded": "Excluded"}
+    ds.attrs["final_var"] = "excluded"
+    return ds
+
+
+def _finals_for_file(
+    entry: dict[str, Any],
+    params: dict[str, Any],
+    base_digest: str,
+    mask: np.ndarray | None,
+    keep_stages: bool,
+    memo: dict[tuple[str, str, bool], xr.Dataset],
+) -> xr.Dataset:
+    """Resolve one file's pipeline Dataset, exclusion mask included."""
+    file_hash = entry["hash"]
+    dataset: SpectralDataset = entry["dataset"]
+    mask_tag = mask_digest(mask)
+
+    key = (file_hash, base_digest + mask_tag, keep_stages)
+    cached = memo.get(key)
+    if cached is not None:
+        _memo_put(memo, key, cached)  # promote to most-recently-used
+        return cached
+
+    # Pre-exclusion result: the mask-independent key, which is exactly the key
+    # this file had before any mask existed.
+    pre_key = (file_hash, base_digest, keep_stages)
+    ds_pre = memo.get(pre_key)
+    if ds_pre is not None:
+        _memo_put(memo, pre_key, ds_pre)
+    else:
+        if not keep_stages:
+            full_ds = memo.get((file_hash, base_digest, True))
+            if full_ds is not None:
+                ds_pre = _final_only_view(full_ds)
+        if ds_pre is None:
+            ds_pre = _run_stage_chain(file_hash, dataset, params, keep_stages)
+        _memo_put(memo, pre_key, ds_pre)
+
+    if not mask_tag:
+        return ds_pre
+
+    ds = _apply_exclusion(ds_pre, mask, dataset.spectral_dim, keep_stages)
+    _memo_put(memo, key, ds)
+    return ds
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -302,39 +397,27 @@ def get_finals(
     A same-(file, params, keep_stages) call within the session is answered
     straight from the finals memo (see module docstring) — no stage code
     runs, not even a cache lookup for CRR/denoise.
+
+    Manual exclusion masks (``params["excl"]["masks"]``) are applied on top of
+    the memoized pre-exclusion result and are keyed separately per file, so a
+    mask edit costs one array copy for the edited file and nothing else.
     """
     params = pipeline_params or default_pipeline_params()
-    digest = _params_digest(params)
+    masks = (params.get("excl") or {}).get("masks") or {}
+    # The mask is excluded from the shared digest and re-enters per file as a
+    # key suffix — see the module docstring.
+    base_digest = _params_digest({k: v for k, v in params.items() if k != "excl"})
     memo = _finals_memo()
 
     all_datasets: dict[str, xr.Dataset] = {}
     errors: list[str] = []
     for name, entry in loaded.items():
-        file_hash = entry["hash"]
-        key = (file_hash, digest, keep_stages)
-
-        cached = memo.get(key)
-        if cached is not None:
-            all_datasets[name] = cached
-            _memo_put(memo, key, cached)  # promote to most-recently-used
-            continue
-
-        if not keep_stages:
-            full_ds = memo.get((file_hash, digest, True))
-            if full_ds is not None:
-                ds = _final_only_view(full_ds)
-                all_datasets[name] = ds
-                _memo_put(memo, key, ds)
-                continue
-
         try:
-            ds = _run_stage_chain(file_hash, entry["dataset"], params, keep_stages)
+            all_datasets[name] = _finals_for_file(
+                entry, params, base_digest, masks.get(name), keep_stages, memo,
+            )
         except Exception as exc:
             errors.append(f"{name}: {exc}")
-            continue
-
-        all_datasets[name] = ds
-        _memo_put(memo, key, ds)
 
     return all_datasets, errors
 
