@@ -13,6 +13,13 @@ from ._mad import noise_estimate_too_small, robust_mad_noise_with_floor
 # SNIP iterations used for repair when broad detection is disabled.
 _SNIP_REPAIR_ITERATIONS_DEFAULT: int = 15
 
+# Residual vs the median reference must also exceed this fraction of the
+# local continuum.  On a smooth PL band the MAD of (y − medfilt) is ~0, so
+# a threshold × MAD gate alone flags the convex peak cap as a cosmic ray.
+# A 15% floor leaves typical PL bands (FWHM ≳ 80 channels) as spectral
+# shape; a bright CR on that band is still several times the continuum.
+_MIN_RELATIVE_RESIDUAL: float = 0.15
+
 
 # ---------------------------------------------------------------------------
 # SNIP background estimator
@@ -129,9 +136,12 @@ def positive_spike_mask_vs_median_smooth(
     median_smoothed_y: np.ndarray,
     threshold_multiplier: float,
 ) -> tuple[np.ndarray, float]:
-    """Mask where positive residual exceeds threshold_multiplier × noise.
+    """Mask where positive residual exceeds the MAD gate *and* a relative floor.
 
     Residual is y − median_smoothed_y; noise is scaled MAD of residual.
+    A cosmic ray must also exceed ``_MIN_RELATIVE_RESIDUAL`` × the local
+    median-filtered intensity, otherwise a smooth PL peak cap is flagged
+    whenever MAD collapses toward zero.
     """
     residual = y - median_smoothed_y
     if not np.any(residual):
@@ -141,7 +151,8 @@ def positive_spike_mask_vs_median_smooth(
         float(np.nanmax(np.abs(median_smoothed_y))),
     )
     noise = robust_mad_noise_with_floor(residual, amplitude_reference)
-    mask = residual > threshold_multiplier * noise
+    rel_floor = _MIN_RELATIVE_RESIDUAL * np.maximum(median_smoothed_y, 0.0)
+    mask = residual > np.maximum(threshold_multiplier * noise, rel_floor)
     return mask.astype(bool), noise
 
 
@@ -312,6 +323,7 @@ def remove_cosmic_rays_1d(
             )
             # Only add channels not already covered by narrow passes
             new_mask_broad &= ~cumulative_mask
+
             if np.any(new_mask_broad):
                 new_mask_broad = _dilate_mask_1d(new_mask_broad)
                 candidate = cumulative_mask | new_mask_broad

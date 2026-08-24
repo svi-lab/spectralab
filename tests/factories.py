@@ -69,3 +69,52 @@ def gaussian_map(
             amp = 50.0 + 5.0 * r + c
             cube[r, c] = amp * peak + 2.0
     return cube
+
+
+def gaussian_peak_1d(
+    n: int,
+    center: int,
+    fwhm: float,
+    amp: float = 1000.0,
+    baseline: float = 50.0,
+) -> np.ndarray:
+    """Gaussian in channel space. ``fwhm`` is full width at half-maximum in channels."""
+    x = np.arange(n, dtype=float)
+    sigma = fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+    sigma = max(sigma, 1e-9)
+    return baseline + amp * np.exp(-0.5 * ((x - center) / sigma) ** 2)
+
+
+def inject_rect_spike(
+    y: np.ndarray,
+    start: int,
+    width: int,
+    height: float,
+) -> np.ndarray:
+    """Copy of ``y`` with a rectangular cosmic-ray-like pulse added."""
+    out = np.asarray(y, dtype=float).copy()
+    out[start : start + width] += height
+    return out
+
+
+def spectrum_da(
+    values: np.ndarray,
+    *,
+    laser_nm: float | None = 355.0,
+    wavelength: np.ndarray | None = None,
+    units: str = "nm",
+) -> xr.DataArray:
+    """1-D spectrum DataArray with a wavelength-style spectral axis."""
+    values = np.asarray(values, dtype=float)
+    if wavelength is None:
+        wavelength = np.arange(values.size, dtype=float)
+    da = xr.DataArray(
+        values,
+        dims=("wavelength",),
+        coords={"wavelength": wavelength},
+        attrs={"Filename": "synth"},
+    )
+    da.coords["wavelength"].attrs["units"] = units
+    if laser_nm is not None:
+        da.attrs["laser_wavelength_nm"] = laser_nm
+    return da
