@@ -19,13 +19,18 @@ from ..charts import (
     make_nmf_diagnostic_echarts,
 )
 from ..controls import (
-    render_axis_controls,
     render_map_display_controls,
     render_mcr_params,
     render_nmf_params,
 )
 from ..map_chart import make_scalar_map_fig
 from ..pipeline_cache import default_pipeline_params, final_da, get_finals
+
+# No spectral-unit selector on this page: every component / ambiguity chart is
+# drawn on an energy scale, same deliberate exception as the Map Analysis page.
+# Safe without a laser wavelength here because the page already refuses
+# anything but PL (Nanometer / ElectronVolt natives) further down.
+_X_UNIT = "energy"
 
 
 def _resolve_reference_spectrum(all_datasets, loaded, ref_file, target_x):
@@ -96,40 +101,33 @@ def render_decomposition_page() -> None:
 
     with left:
         with st.container(border=True):
-            st.markdown('<p class="section-header">Display</p>', unsafe_allow_html=True)
-            x_unit, laser_nm = render_axis_controls(
-                "nmf", ds.laser_nm, native_type=ds.spectral_units,
-            )
-
-        with st.container(border=True):
             st.markdown('<p class="section-header">Method</p>', unsafe_allow_html=True)
             method = st.radio(
                 "Decomposition method",
-                ["MCR-ALS", "NMF"],
+                ["NMF", "MCR-ALS"],
                 index=0,
                 key="decomp_method",
                 help=(
-                    "**MCR-ALS** (recommended for PL): resolves physically "
-                    "interpretable pure-component spectra + concentration maps "
-                    "under non-negativity, and reports how uniquely each "
-                    "component is resolved.\n\n"
-                    "**NMF**: a fast statistical basis for recurring spectral "
-                    "shapes — useful, but its components are not tied to a "
-                    "physical model as directly."
+                    "**NMF** (default): a fast statistical basis for recurring "
+                    "spectral shapes — useful, but its components are not tied "
+                    "to a physical model as directly.\n\n"
+                    "**MCR-ALS**: resolves physically interpretable "
+                    "pure-component spectra + concentration maps under "
+                    "non-negativity, and reports how uniquely each component "
+                    "is resolved."
                 ),
             )
 
     if method == "MCR-ALS":
-        _render_mcr(left, right, loaded, all_datasets, da_map, ds, map_name,
-                    x_unit, laser_nm)
+        _render_mcr(left, right, loaded, all_datasets, da_map, ds, map_name)
     else:
-        _render_nmf(left, right, da_map, ds, map_name, x_unit, laser_nm)
+        _render_nmf(left, right, da_map, ds, map_name)
 
 
 # --------------------------------------------------------------------------- #
 # MCR-ALS
 # --------------------------------------------------------------------------- #
-def _render_mcr(left, right, loaded, all_datasets, da_map, ds, map_name, x_unit, laser_nm):
+def _render_mcr(left, right, loaded, all_datasets, da_map, ds, map_name):
     spectral_dim = da_map.dims[-1]
     target_x = da_map.coords[spectral_dim].values
 
@@ -229,7 +227,7 @@ def _render_mcr(left, right, loaded, all_datasets, da_map, ds, map_name, x_unit,
 
         mcr_result = st.session_state.get("sl_mcr_result")
         if mcr_result and mcr_result["file_name"] == map_name:
-            _render_mcr_results(mcr_result, ds, map_name, x_unit, laser_nm)
+            _render_mcr_results(mcr_result, ds, map_name)
         elif mcr_result is not None:
             st.caption(f"Last MCR-ALS result was for **{mcr_result['file_name']}** — run again for **{map_name}**.")
 
@@ -246,7 +244,7 @@ def _render_mcr(left, right, loaded, all_datasets, da_map, ds, map_name, x_unit,
                 )
 
 
-def _render_mcr_results(mcr_result, ds, map_name, x_unit, laser_nm):
+def _render_mcr_results(mcr_result, ds, map_name):
     st.caption(
         "**Physical read:** each component spectrum is a resolved pure-emission "
         "profile and each map is its relative concentration. How trustworthy "
@@ -266,7 +264,7 @@ def _render_mcr_results(mcr_result, ds, map_name, x_unit, laser_nm):
                 mcr_result["spectral_coords"],
                 mcr_result["spectral_dim"],
                 title=comp_title,
-                x_unit=x_unit, laser_nm=laser_nm,
+                x_unit=_X_UNIT, laser_nm=ds.laser_nm,
                 src_unit=ds.spectral_unit, native_type=ds.spectral_units,
             ),
             height="72vh",
@@ -296,7 +294,7 @@ def _render_mcr_results(mcr_result, ds, map_name, x_unit, laser_nm):
         st.plotly_chart(fig, width="stretch", height=550)
 
     with tab_amb:
-        _render_ambiguity_tab(mcr_result, ds, x_unit, laser_nm)
+        _render_ambiguity_tab(mcr_result, ds)
 
     with tab_stats:
         meta = mcr_result["meta"]
@@ -327,7 +325,7 @@ def _render_mcr_results(mcr_result, ds, map_name, x_unit, laser_nm):
         )
 
 
-def _render_ambiguity_tab(mcr_result, ds, x_unit, laser_nm):
+def _render_ambiguity_tab(mcr_result, ds):
     amb = mcr_result.get("ambiguity")
     if not amb:
         st.info(
@@ -382,7 +380,7 @@ def _render_ambiguity_tab(mcr_result, ds, x_unit, laser_nm):
                 mcr_result["spectral_coords"],
                 mcr_result["spectral_dim"],
                 title="Feasible-band boundary spectra",
-                x_unit=x_unit, laser_nm=laser_nm,
+                x_unit=_X_UNIT, laser_nm=ds.laser_nm,
                 src_unit=ds.spectral_unit, native_type=ds.spectral_units,
             ),
             height="60vh",
@@ -392,7 +390,7 @@ def _render_ambiguity_tab(mcr_result, ds, x_unit, laser_nm):
 # --------------------------------------------------------------------------- #
 # NMF (unchanged behaviour)
 # --------------------------------------------------------------------------- #
-def _render_nmf(left, right, da_map, ds, map_name, x_unit, laser_nm):
+def _render_nmf(left, right, da_map, ds, map_name):
     with left:
         with st.container(border=True):
             st.markdown('<p class="section-header">Diagnostic Curve</p>', unsafe_allow_html=True)
@@ -470,7 +468,7 @@ def _render_nmf(left, right, da_map, ds, map_name, x_unit, laser_nm):
                         nmf_result["spectral_coords"],
                         nmf_result["spectral_dim"],
                         title=comp_title,
-                        x_unit=x_unit, laser_nm=laser_nm,
+                        x_unit=_X_UNIT, laser_nm=ds.laser_nm,
                         src_unit=ds.spectral_unit, native_type=ds.spectral_units,
                     ),
                     height="72vh",

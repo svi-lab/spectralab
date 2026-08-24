@@ -22,9 +22,7 @@ Session state
                   (e.g. Decomposition's fixed-component reference).
     enabled     : bool — the "Calculate optical model" toggle.
     summary     : dict | None — output of ``film_stack_summary`` /
-                  ``bare_substrate_summary``. Includes ``c_physics`` (kept for
-                  background suppression even though it is no longer
-                  displayed). None while the toggle is off.
+                  ``bare_substrate_summary``. None while the toggle is off.
     laser_nm, substrate, sub_n, sub_k, sub_d_mm, film_d_nm, film_n, film_k
                 — last-entered inputs, preserved across toggle off/on.
 
@@ -67,8 +65,13 @@ def _draw_overlay_cached(
 
 
 @st.cache_data(show_spinner=False, max_entries=16)
-def _full_npz_cached(file_hash: str, pipeline_params: dict, _da) -> bytes:
-    return spectra_to_npz(_da)
+def _full_npz_cached(
+    file_hash: str, pipeline_params: dict, _da, excluded_mask=None
+) -> bytes:
+    # excluded_mask is hashed (no underscore prefix) so the payload is rebuilt
+    # when the user edits the mask; pipeline_params carries it too, but only as
+    # part of a dict whose other keys change independently.
+    return spectra_to_npz(_da, excluded_mask)
 
 
 @st.cache_data(show_spinner=False, max_entries=16)
@@ -186,8 +189,8 @@ def _render_bare_substrate_summary(bare: dict) -> None:
         unsafe_allow_html=True,
     )
     st.caption(
-        "Reference file: the fraction entering (1 − R) is the denominator "
-        "of the physics suppression scale."
+        "Reference file: the fraction entering (1 − R) is the light that "
+        "reaches the substrate after the air interface."
     )
 
 
@@ -195,8 +198,7 @@ def _render_sample_structure_card(name: str, entry: dict) -> None:
     """Sample-type radio (always visible) + opt-in optical model.
 
     The toggle gates all optics inputs and computation; when it is off the
-    stored ``summary`` is None, which disables the physics background scale
-    for this file, but the previously entered inputs are preserved so
+    stored ``summary`` is None, but previously entered inputs are preserved so
     re-enabling restores them.
     """
     ds = entry["dataset"]
@@ -228,8 +230,7 @@ def _render_sample_structure_card(name: str, entry: dict) -> None:
             key=f"ss_{h}_calc",
             help=(
                 "Compute the excitation light distribution (reflection / absorption) "
-                "for this stack via TMM and Beer–Lambert. Also required for "
-                "the physics background-suppression scale."
+                "for this stack via TMM and Beer–Lambert."
             ),
         )
 
@@ -396,8 +397,8 @@ def _pipeline_export_caption(params: dict | None) -> str:
         stages.append("CRR")
     if params.get("denoise_enabled"):
         stages.append("denoising")
-    if params.get("bg_enabled"):
-        stages.append("background suppression")
+    if (params.get("excl") or {}).get("masks"):
+        stages.append("manual exclusion (NaN in place — shape preserved)")
     if not stages:
         return "No preprocessing stages enabled — exporting raw data."
     return "Export includes: " + ", ".join(stages) + "."
@@ -411,11 +412,12 @@ def _render_export_card(name: str, file_hash: str, da_final, params: dict) -> No
             st.warning("No exportable data — fix the processing error above.")
             return
         stem = _export_stem(name)
+        excluded_mask = (params.get("excl") or {}).get("masks", {}).get(name)
         btn_cols = st.columns(2 if da_final.ndim > 1 else 1)
         with btn_cols[0]:
             st.download_button(
                 "Full spectra (.npz)",
-                _full_npz_cached(file_hash, params, da_final),
+                _full_npz_cached(file_hash, params, da_final, excluded_mask),
                 file_name=f"{stem}.npz",
                 key=f"export_full_{file_hash}",
             )

@@ -7,18 +7,6 @@ from typing import Any
 
 import streamlit as st
 
-# Background suppression is currently disabled app-wide — see
-# render_bg_params() below. Kept importable for a future re-enable.
-# from backend.background._presets import (
-#     find_preset,
-#     format_temperature_label,
-#     list_materials,
-#     list_presets,
-#     list_temperatures,
-#     list_thicknesses,
-# )
-
-
 X_UNIT_OPTIONS = ["wavelength", "energy", "wavenumber", "raman_shift"]
 X_UNIT_FMT = {
     "wavelength":  "Wavelength (nm)",
@@ -29,7 +17,7 @@ X_UNIT_FMT = {
 UNIT_DEFAULT = {
     "RamanShift":   "raman_shift",
     "Wavenumber":   "wavenumber",
-    "Nanometer":    "wavelength",
+    "Nanometer":    "energy",
     "ElectronVolt": "energy",
 }
 
@@ -378,130 +366,6 @@ def render_denoising_params() -> dict[str, Any]:
         per_spectrum=per_spectrum,
         smoother=smoother_params,
     )
-
-
-# Background suppression is currently disabled app-wide — no page calls
-# render_bg_params(). Kept for a future re-enable.
-# def render_bg_params(
-#     loaded: dict,
-#     ds_name: str,
-#     is_map: bool,
-# ) -> dict[str, Any]:
-#     """Render Background Suppression parameter widgets.
-# 
-#     Parameters
-#     ----------
-#     loaded   : st.session_state["sl_loaded"] — all loaded files
-#     ds_name  : name of the file being processed (the "target")
-#     is_map   : whether the target dataset is a map (enables per-pixel and region options)
-# 
-#     Returns bg_params dict consumed by BackgroundSuppressor + pipeline.preprocess.
-#     """
-#     other_files = [n for n in loaded if n != ds_name]
-# 
-#     # ── Reference source ─────────────────────────────────────────────────
-#     source_options = ["Built-in preset", "Loaded file (mean)"]
-#     if is_map:
-#         source_options.append("Map region (pixel block)")
-#     ref_source = st.radio(
-#         "Reference source",
-#         source_options,
-#         key="bg_ref_source",
-#         horizontal=True,
-#     )
-# 
-#     ref_params: dict[str, Any] = {"source": ref_source}
-# 
-#     if ref_source == "Built-in preset":
-#         presets = list_presets()
-#         if not presets:
-#             st.warning("No built-in substrate presets found in backend/background/data/.")
-#             return {"valid": False}
-# 
-#         materials = list_materials()
-#         material = st.selectbox(
-#             "Substrate material",
-#             materials,
-#             key="bg_preset_material",
-#             format_func=lambda m: {"glass": "Glass", "SiO2": "SiO₂", "Si": "Si"}.get(m, m),
-#         )
-# 
-#         thickness_mm: int | None = None
-#         if material == "glass":
-#             thicknesses = list_thicknesses(material)
-#             if not thicknesses:
-#                 st.warning(f"No thickness presets found for {material}.")
-#                 return {"valid": False}
-#             thickness_mm = st.selectbox(
-#                 "Glass thickness",
-#                 thicknesses,
-#                 key="bg_preset_thickness",
-#                 format_func=lambda t: f"{t} mm",
-#             )
-# 
-#         temperatures = list_temperatures(material, thickness_mm)
-#         if not temperatures:
-#             st.warning("No temperature presets match the selected material/thickness.")
-#             return {"valid": False}
-#         temperature = st.selectbox(
-#             "Substrate temperature",
-#             temperatures,
-#             key="bg_preset_temp",
-#             format_func=format_temperature_label,
-#         )
-# 
-#         preset = find_preset(material, temperature, thickness_mm)
-#         if preset is None:
-#             st.error("Selected preset combination is not available.")
-#             return {"valid": False}
-#         ref_params["preset_key"] = preset.key
-#         st.caption(f"Preset: `{preset.key}`")
-# 
-#     elif ref_source == "Loaded file (mean)":
-#         if not other_files:
-#             st.warning("Load a bare-substrate file alongside your sample file to use this option.")
-#             return {"valid": False}
-#         # Files marked "Bare substrate" on the Data page come first and are labelled.
-#         ss_struct = st.session_state.get("sl_sample_structure", {})
-#         sub_files = [n for n in other_files
-#                      if ss_struct.get(n, {}).get("sample_type") == "substrate"]
-#         candidates = sub_files + [n for n in other_files if n not in sub_files]
-#         ref_file = st.selectbox(
-#             "Reference file", candidates, key="bg_ref_file",
-#             format_func=lambda n: f"{n} — substrate" if n in sub_files else n,
-#         )
-#         ref_params["ref_file"] = ref_file
-#         ref_ds = loaded[ref_file]["dataset"]
-#         if ref_ds.laser_nm is not None:
-#             ds_laser = loaded[ds_name]["dataset"].laser_nm
-#             if ds_laser is not None and abs(ref_ds.laser_nm - ds_laser) > 5:
-#                 st.warning(
-#                     f"Reference laser ({ref_ds.laser_nm:g} nm) differs from "
-#                     f"target ({ds_laser:g} nm) by >{5} nm."
-#                 )
-#     else:
-#         if not is_map:
-#             st.info("Region selection is only available for map datasets.")
-#             return {"valid": False}
-#         c1, c2 = st.columns(2)
-#         row_min = c1.number_input("Row min", value=0, min_value=0, step=1, key="bg_row_min")
-#         row_max = c2.number_input("Row max", value=0, min_value=0, step=1, key="bg_row_max")
-#         c3, c4 = st.columns(2)
-#         col_min = c3.number_input("Col min", value=0, min_value=0, step=1, key="bg_col_min")
-#         col_max = c4.number_input("Col max", value=0, min_value=0, step=1, key="bg_col_max")
-#         ref_params.update({"row_min": int(row_min), "row_max": int(row_max),
-#                            "col_min": int(col_min), "col_max": int(col_max)})
-# 
-#     st.caption(
-#         "c comes from the optical model entered on the **Data page** "
-#         "(Sample Structure). The factor breakdown is shown below."
-#     )
-# 
-#     return {
-#         "valid": True,
-#         "ref_params": ref_params,
-#         "scale_mode": "physics",
-#     }
 
 
 def render_nmf_params() -> dict[str, Any]:

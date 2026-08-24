@@ -337,8 +337,13 @@ def _datazoom(
     end_value=None,
     x_unit: str = "wavelength",
 ) -> list:
-    inside = {"type": "inside", "xAxisIndex": 0}
-    slider = {"type": "slider", "xAxisIndex": 0, "bottom": 10, "height": 35}
+    # xAxisIndex targets both the primary AND secondary (top, other-unit) axis —
+    # every spectral chart here has two x-axes mirroring the same physical range in
+    # different units (see _make_axes). Binding the region selector to xAxisIndex 0
+    # only would zoom the bottom axis while leaving the top axis frozen at the full
+    # original range, so after a zoom the two axes would disagree about what's shown.
+    inside = {"type": "inside", "xAxisIndex": [0, 1]}
+    slider = {"type": "slider", "xAxisIndex": [0, 1], "bottom": 10, "height": 35}
     if x_unit == "energy":
         fmt_js = "function(v) { return v.toFixed(2); }"
     else:
@@ -639,8 +644,10 @@ def make_final_echarts(
         norm_vals = idx_sample.astype(float) / max(n_spectra - 1, 1)
         palette = _sample_colorscale(VIRIDIS, norm_vals.tolist())
         vm_colors = VIRIDIS
-        vmin_v, vmax_v = 0.0, float(n_spectra - 1)
-        vm_text = [str(n_spectra - 1), "0"]
+        # Colorbar is labelled 1..n to match the 1-based spectrum numbering the
+        # rest of the app shows; the colours themselves come from norm_vals.
+        vmin_v, vmax_v = 1.0, float(n_spectra)
+        vm_text = [str(n_spectra), "1"]
 
     series: list[dict] = []
     for i, sp_i in enumerate(idx_sample):

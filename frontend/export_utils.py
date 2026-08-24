@@ -9,11 +9,20 @@ import numpy as np
 import xarray as xr
 
 
-def spectra_to_npz(da: xr.DataArray) -> bytes:
+def spectra_to_npz(da: xr.DataArray, excluded_mask: np.ndarray | None = None) -> bytes:
+    """Pack the processed cube at full resolution and original shape.
+
+    ``excluded_mask`` (bool over the spatial dims, True = manually excluded) is
+    written alongside when supplied, so a consumer can tell hand-excluded
+    spectra from the ones Clean Data dropped — both are all-NaN rows in
+    ``data``, and ``data`` always keeps the raw WDF geometry either way.
+    """
     arrays = {"data": da.values}
     for dim in da.dims:
         if dim in da.coords:
             arrays[f"{dim}_coords"] = da.coords[dim].values
+    if excluded_mask is not None and np.any(excluded_mask):
+        arrays["excluded_mask"] = np.asarray(excluded_mask, dtype=bool)
     buf = io.BytesIO()
     np.savez(buf, **arrays)
     return buf.getvalue()
