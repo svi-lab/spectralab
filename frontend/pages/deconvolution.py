@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import csv
 import io
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import streamlit as st
 from streamlit_echarts import st_echarts
 
@@ -29,6 +31,23 @@ from ..map_chart import make_scalar_map_fig
 from ..pipeline_cache import default_pipeline_params, final_da, get_finals
 
 _BAND_COLUMNS = ["label", "center_guess", "center_min", "center_max", "sigma_guess", "sigma_min", "sigma_max"]
+_NUMERIC_BAND_COLUMNS = _BAND_COLUMNS[1:]
+
+# The band editor is remounted under a fresh key whenever the display unit changes or
+# the table is edited programmatically (preset load / chart click / clear), so the grid
+# always shows the current rows -- st.data_editor caches rows under its own key and
+# ignores a changed `value` argument otherwise.
+_EDITOR_KEY_PREFIX = "deconv_bands_editor_"
+
+# Editing precision per display unit. `step` is what actually fixes the "can only type
+# whole numbers" problem: st.column_config.NumberColumn falls back to integer stepping
+# unless the column resolves to a float dtype *and* a sub-unit step is given.
+_UNIT_SPEC: dict[str, dict[str, Any]] = {
+    "energy":      {"short": "eV",   "step": 0.0001, "format": "%.4f"},
+    "wavelength":  {"short": "nm",   "step": 0.01,   "format": "%.2f"},
+    "wavenumber":  {"short": "cm⁻¹", "step": 0.1,    "format": "%.1f"},
+    "raman_shift": {"short": "cm⁻¹", "step": 0.1,    "format": "%.1f"},
+}
 
 # Every preset band gets a +/- 20 nm center bound by default, on top of its literature
 # position, so an initial fit doesn't let a peak wander into a neighboring one.
@@ -63,23 +82,194 @@ def _none_or_float(v: Any) -> float | None:
         f = float(v)
     except (TypeError, ValueError):
         return None
-    return None if np.isnan(f) else f
+    return None if not np.isfinite(f) else f
 
 
-def _reset_bands_table(rows: list[dict]) -> None:
-    """Replace the band table and drop the editor's cached widget state.
+def _none_or_str(v: Any) -> str | None:
+    if v is None:
+        return None
+    try:
+        if pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return str(v).strip() or None
 
-    st.data_editor caches its rows under its own `key` once rendered, so just
-    changing the `value` argument on a later rerun does not reliably refresh
-    what's on screen — the cached widget state has to be cleared too.
+
+# ---------------------------------------------------------------------------
+# Band rows: canonical eV storage <-> the unit the Display selector shows
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _BandUnits:
+    """Maps band parameters between the page's canonical eV storage and whichever
+    unit the Display selector is currently showing.
+
+    Band rows are always *stored* in eV, because fitting always runs on the energy
+    axis — but the user types the number they read off the chart, so every value
+    crossing the editor boundary passes through here. Two wrinkles this handles:
+
+    * nm and Raman shift run *opposite* to eV, so a (min, max) pair has to swap
+      slots on the way across — an eV lower bound is a nm upper bound.
+    * a sigma is a width, not a position, so it maps through the local scale at its
+      own band's center rather than pointwise.
     """
+
+    spectral_dim: str
+    x_unit: str
+    laser_nm: float | None
+    src_unit: str
+    short: str = field(init=False)
+    step: float = field(init=False)
+    number_format: str = field(init=False)
+    inverts: bool = field(init=False)
+
+    def __post_init__(self) -> None:
+        spec = _UNIT_SPEC.get(self.x_unit, _UNIT_SPEC["energy"])
+        self.short = spec["short"]
+        self.step = spec["step"]
+        self.number_format = spec["format"]
+        # Probed rather than hard-coded per unit, so it stays correct if convert_x
+        # ever gains a unit.
+        self.inverts = self.from_ev(2.0) < self.from_ev(1.0)
+
+    def from_ev(self, ev: float) -> float:
+        return float(convert_x(
+            np.asarray([ev], dtype=float), self.spectral_dim, self.x_unit, self.laser_nm,
+            src_unit=self.src_unit, native_type="ElectronVolt",
+        )[0])
+
+    def to_ev(self, disp: float) -> float:
+        return float(convert_x_to_native(
+            disp, self.spectral_dim, self.x_unit, self.laser_nm,
+            src_unit=self.src_unit, native_type="ElectronVolt",
+        ))
+
+    def _scale_at(self, center_ev: float) -> float | None:
+        """|d(display)/d(eV)| at ``center_ev``, by central difference.
+
+        Widths convert through this local scale rather than by mapping the band's own
+        ±σ edges: the edge mapping is exact for the edges but *not invertible* (the
+        eV-symmetric interval [E−σ, E+σ] is not symmetric in nm about λ(E), so the
+        round trip drifts — measured 1.3% per pass on a 0.2 eV σ). A single scale
+        factor evaluated at the center is a linearization, but it inverts exactly,
+        which matters far more here: these values round-trip through the editor on
+        every rerun.
+        """
+        delta = max(abs(center_ev) * 1e-6, 1e-9)
+        try:
+            span = abs(self.from_ev(center_ev + delta) - self.from_ev(center_ev - delta))
+        except (ZeroDivisionError, ValueError, FloatingPointError):
+            return None
+        scale = span / (2 * delta)
+        return scale if np.isfinite(scale) and scale > 0 else None
+
+    def width_from_ev(self, sigma_ev: float | None, center_ev: float | None) -> float | None:
+        if sigma_ev is None or center_ev is None or self.x_unit == "energy":
+            return sigma_ev
+        scale = self._scale_at(center_ev)
+        return None if scale is None else sigma_ev * scale
+
+    def width_to_ev(self, sigma_disp: float | None, center_disp: float | None) -> float | None:
+        if sigma_disp is None or center_disp is None or self.x_unit == "energy":
+            return sigma_disp
+        try:
+            scale = self._scale_at(self.to_ev(center_disp))
+        except (ZeroDivisionError, ValueError, FloatingPointError):
+            return None
+        return None if scale is None else sigma_disp / scale
+
+
+def _row_to_display(units: _BandUnits, row: dict) -> dict:
+    """One canonical (eV) band row -> the row shown in the editor."""
+    center = _none_or_float(row.get("center_guess"))
+    lo = _none_or_float(row.get("center_min"))
+    hi = _none_or_float(row.get("center_max"))
+    d_lo = units.from_ev(lo) if lo is not None else None
+    d_hi = units.from_ev(hi) if hi is not None else None
+    if units.inverts:
+        d_lo, d_hi = d_hi, d_lo
+    out: dict[str, Any] = {
+        "label": _none_or_str(row.get("label")),
+        "center_guess": units.from_ev(center) if center is not None else None,
+        "center_min": d_lo,
+        "center_max": d_hi,
+    }
+    for key in ("sigma_guess", "sigma_min", "sigma_max"):
+        out[key] = units.width_from_ev(_none_or_float(row.get(key)), center)
+    # Deliberately *not* rounded to the column's display precision: `format` already
+    # controls what the cell shows, while the value itself keeps full precision, so
+    # eV -> display -> eV is exact and merely switching the Display unit back and
+    # forth leaves the stored centers bit-identical.
+    return out
+
+
+def _row_from_display(units: _BandUnits, row: dict) -> dict:
+    """One editor row -> the canonical (eV) band row. Inverse of :func:`_row_to_display`."""
+    center = _none_or_float(row.get("center_guess"))
+    lo = _none_or_float(row.get("center_min"))
+    hi = _none_or_float(row.get("center_max"))
+    ev_lo = units.to_ev(lo) if lo is not None else None
+    ev_hi = units.to_ev(hi) if hi is not None else None
+    if units.inverts:
+        ev_lo, ev_hi = ev_hi, ev_lo
+    out: dict[str, Any] = {
+        "label": _none_or_str(row.get("label")),
+        "center_guess": units.to_ev(center) if center is not None else None,
+        "center_min": ev_lo,
+        "center_max": ev_hi,
+    }
+    for key in ("sigma_guess", "sigma_min", "sigma_max"):
+        out[key] = units.width_to_ev(_none_or_float(row.get(key)), center)
+    return out
+
+
+def _display_frame(units: _BandUnits, rows: list[dict]) -> pd.DataFrame:
+    """Build the editor's DataFrame with every column's dtype pinned.
+
+    Pinning matters for more than tidiness. A list of dicts whose ``sigma_*`` values
+    are all ``None`` gives pandas an *object* column, which Streamlit resolves to
+    ``ColumnDataKind.EMPTY`` — a NumberColumn over an EMPTY column has no float hint
+    and falls back to integer stepping, so decimals typed into it get truncated.
+    Naming the columns explicitly also keeps an empty table (after "Clear all") a
+    usable 7-column grid instead of a zero-column one with nothing to type into.
+    """
+    df = pd.DataFrame([_row_to_display(units, r) for r in rows], columns=_BAND_COLUMNS)
+    df["label"] = df["label"].astype("string")
+    for col in _NUMERIC_BAND_COLUMNS:
+        df[col] = pd.to_numeric(df[col], errors="coerce").astype("float64")
+    return df
+
+
+def _bands_digest(rows: list[dict]) -> str:
+    """Cheap identity for the staged band table, to tell whether the displayed fit
+    is still the fit for these bands."""
+    return repr([tuple(_none_or_float(r.get(c)) for c in _NUMERIC_BAND_COLUMNS) for r in rows])
+
+
+# ---------------------------------------------------------------------------
+# Band table state (canonical eV; never display units)
+# ---------------------------------------------------------------------------
+
+def _set_bands(rows: list[dict]) -> None:
+    """Replace the band table and force the editor to remount on the next run.
+
+    Two keys, deliberately: ``deconv_bands_source`` is what the grid renders from and
+    only ever changes here, while ``deconv_bands_table`` is the resolved result the
+    rest of the page reads (grid delta already applied) — see :func:`_sync_editor_source`
+    for why writing the resolved rows back into the source would duplicate rows.
+    Bumping the revision is what actually makes a programmatic edit visible: the
+    editor caches its rows under its own key and ignores a changed ``data`` argument
+    unless that key changes.
+    """
+    st.session_state["deconv_bands_source"] = rows
     st.session_state["deconv_bands_table"] = rows
-    st.session_state.pop("deconv_bands_editor", None)
+    st.session_state["deconv_bands_rev"] = st.session_state.get("deconv_bands_rev", 0) + 1
 
 
 def _append_bands(new_rows: list[dict]) -> None:
     current = st.session_state.get("deconv_bands_table") or []
-    _reset_bands_table([*current, *new_rows])
+    _set_bands([*current, *new_rows])
 
 
 def _preset_band_half_widths_nm(presets: tuple[BandPreset, ...]) -> dict[float, float]:
@@ -106,8 +296,9 @@ def _preset_band_half_widths_nm(presets: tuple[BandPreset, ...]) -> dict[float, 
 
 
 def _preset_rows_to_table_rows(presets: tuple[BandPreset, ...]) -> list[dict]:
-    """Band table rows always in eV — fitting on this page always runs in energy space,
-    independent of the file's native storage unit (see render_deconvolution_page)."""
+    """Canonical band rows, i.e. always eV — fitting on this page always runs in energy
+    space, independent of the file's native storage unit and of whichever unit the
+    editor happens to be showing (see :class:`_BandUnits`)."""
     half_widths = _preset_band_half_widths_nm(presets)
     rows: list[dict] = []
     for p in presets:
@@ -139,9 +330,145 @@ def _bands_from_table(rows: list[dict]) -> list[BandSpec]:
             sigma_guess=_none_or_float(row.get("sigma_guess")),
             sigma_min=_none_or_float(row.get("sigma_min")),
             sigma_max=_none_or_float(row.get("sigma_max")),
-            label=(row.get("label") or None) or f"Band {i + 1}",
+            label=_none_or_str(row.get("label")) or f"Band {i + 1}",
         ))
     return bands
+
+
+def _sync_editor_source(units: _BandUnits) -> str:
+    """Return the band editor's widget key, refreshing the rows it renders from
+    whenever that key is about to change.
+
+    st.data_editor keeps the user's adds/edits/deletes as a *delta* against its
+    ``data`` argument and replays that delta on every rerun. So the resolved rows must
+    never be written back into ``data`` under an unchanged key — the delta would apply
+    a second time and every row added through the grid would duplicate itself. The
+    source is therefore refreshed only at the two moments the key changes: a
+    programmatic edit (which bumps the revision) or a display-unit switch (which has
+    to remount the grid to relabel it in the new unit).
+    """
+    if st.session_state.get("deconv_bands_unit") != units.x_unit:
+        st.session_state["deconv_bands_source"] = st.session_state.get("deconv_bands_table") or []
+        st.session_state["deconv_bands_unit"] = units.x_unit
+    return f"{_EDITOR_KEY_PREFIX}{units.x_unit}_{st.session_state.get('deconv_bands_rev', 0)}"
+
+
+def _render_band_editor(units: _BandUnits, file_name: str) -> tuple[list[dict], bool]:
+    """Full-width Band Parameters card. Returns (canonical eV rows, fit_clicked).
+
+    The grid is the single editing surface: its own trailing blank row and row-delete
+    replace what used to be a separate quick-add number input and a "Remove bands"
+    multiselect. Those three widget groups all edited the same list keyed by list
+    index, so any row that moved left the others pointing at the wrong band.
+    """
+    with st.container(border=True):
+        st.markdown('<p class="section-header">Band Parameters</p>', unsafe_allow_html=True)
+
+        head = st.columns([3, 2, 1, 2, 5], vertical_alignment="bottom")
+        preset_choice = head[0].selectbox(
+            "Load preset", ["— none —", *list_preset_materials()], key="deconv_preset_select",
+        )
+        presets = get_preset_bands(preset_choice) if preset_choice != "— none —" else ()
+        head[1].button(
+            f"Add {len(presets)} bands" if presets else "Add preset bands",
+            key="deconv_add_preset", disabled=not presets, width="stretch",
+            on_click=_append_bands, args=(_preset_rows_to_table_rows(presets),),
+        )
+        head[2].button(
+            "Clear", key="deconv_clear_bands_button", width="stretch",
+            on_click=_set_bands, args=([],),
+        )
+        fit_clicked = head[3].button(
+            "Fit", key="deconv_fit_button", type="primary", width="stretch",
+        )
+
+        if presets:
+            with st.expander(f"{preset_choice} literature positions", expanded=False):
+                st.caption(
+                    f"Each band loads with a center bound of up to ±{_PRESET_BOUND_HALF_WIDTH_NM:.0f} nm "
+                    "around its literature position, narrowed near closely-spaced neighbors so "
+                    "bands can't swap which peak they claim."
+                )
+                st.dataframe(
+                    [
+                        {
+                            "Label": p.label,
+                            "λ (nm)": p.wavelength_nm,
+                            "E (eV)": p.energy_ev,
+                            "Assignment": p.assignment + (" (tentative)" if p.tentative else ""),
+                        }
+                        for p in presets
+                    ],
+                    width="stretch",
+                    hide_index=True,
+                )
+
+        editor_key = _sync_editor_source(units)
+        for stale in [
+            k for k in st.session_state
+            if isinstance(k, str) and k.startswith(_EDITOR_KEY_PREFIX) and k != editor_key
+        ]:
+            st.session_state.pop(stale, None)
+
+        u = units.short
+
+        def _num(label: str, help_text: str | None = None) -> Any:
+            return st.column_config.NumberColumn(
+                label, step=units.step, format=units.number_format, help=help_text,
+            )
+
+        edited = st.data_editor(
+            _display_frame(units, st.session_state.get("deconv_bands_source") or []),
+            num_rows="dynamic",
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "label": st.column_config.TextColumn("Label", width="medium"),
+                "center_guess": _num(f"Center ({u})", "Starting position. Rows left blank here are ignored."),
+                "center_min": _num(f"Center min ({u})", "Blank = unconstrained."),
+                "center_max": _num(f"Center max ({u})", "Blank = unconstrained."),
+                "sigma_guess": _num(f"σ guess ({u})", "Blank = estimated from the data."),
+                "sigma_min": _num(f"σ min ({u})", "Blank = unconstrained."),
+                "sigma_max": _num(f"σ max ({u})", "Blank = unconstrained."),
+            },
+            column_order=_BAND_COLUMNS,
+            key=editor_key,
+        )
+        rows = [_row_from_display(units, r) for r in edited.to_dict("records")]
+        st.session_state["deconv_bands_table"] = rows
+
+        st.caption(
+            f"Positions are in {u}, following the **Display → Spectral units** selector below — "
+            "switch it to type in a different unit. Bands are stored and fitted in energy space "
+            "either way, so switching relabels the same physical bands. Add a band by typing into "
+            "the trailing blank row or by clicking the chart; delete by selecting rows and pressing "
+            "the trash icon."
+        )
+        if (
+            st.session_state.get("sl_deconv_result") is not None
+            and st.session_state.get("sl_deconv_result_file") == file_name
+            and st.session_state.get("sl_deconv_result_digest") != _bands_digest(rows)
+        ):
+            st.caption("⚠️ Band table changed since the last fit — press **Fit** to update the chart.")
+
+    return rows, fit_clicked
+
+
+def _run_fit(target_x: np.ndarray, target_y: np.ndarray, rows: list[dict], file_name: str) -> None:
+    """Fit the staged bands and store the result (plus the band digest the stale-fit
+    notice compares against). Errors are surfaced, not raised."""
+    bands = _bands_from_table(rows)
+    if not bands:
+        st.error("Add at least one band with a center guess before fitting.")
+        return
+    try:
+        fit_result = PeakFitter().fit(target_x, target_y, bands)
+    except (ValueError, NotImplementedError) as exc:
+        st.error(f"Fit failed: {exc}")
+        return
+    st.session_state["sl_deconv_result"] = fit_result
+    st.session_state["sl_deconv_result_file"] = file_name
+    st.session_state["sl_deconv_result_digest"] = _bands_digest(rows)
 
 
 def _fit_stats_rows(fit_result: FitResult) -> list[dict]:
@@ -201,7 +528,8 @@ def _batch_result_csv(batch_result, labels: list[str]) -> bytes:
 
 
 def render_deconvolution_page() -> None:
-    """Deconvolution page: target + band parameters (left), fit results (right)."""
+    """Deconvolution page: band table (full width, top), target controls (left),
+    fit results (right)."""
     loaded = st.session_state.get("sl_loaded")
     if not loaded:
         st.info("Upload files in the sidebar to get started.")
@@ -211,30 +539,32 @@ def render_deconvolution_page() -> None:
     with st.spinner("Preparing data…"):
         all_datasets, _errors = get_finals(loaded, pipeline_params)
 
-    left, right = st.columns([1, 2], gap="medium")
-
-    with left:
-        if len(loaded) > 1:
-            file_name = st.selectbox("Select file", list(loaded.keys()), key="deconv_file_select")
-        else:
-            file_name = next(iter(loaded))
-        ds: SpectralDataset = loaded[file_name]["dataset"]
+    if len(loaded) > 1:
+        file_name = st.columns([1, 2])[0].selectbox(
+            "Select file", list(loaded.keys()), key="deconv_file_select",
+        )
+    else:
+        file_name = next(iter(loaded))
+    ds: SpectralDataset = loaded[file_name]["dataset"]
 
     if ds.measurement_kind != "PL":
-        with left:
-            st.info("Deconvolution is available for PL data only (Nanometer/ElectronVolt axes).")
-        with right:
-            st.info("Deconvolution is available for PL data only (Nanometer/ElectronVolt axes).")
+        st.info("Deconvolution is available for PL data only (Nanometer/ElectronVolt axes).")
         return
 
     da_final = final_da(all_datasets.get(file_name))
     if da_final is None:
-        with right:
-            st.warning("Processing result not available for this file. Visit the Preprocessing page first.")
+        st.warning("Processing result not available for this file. Visit the Preprocessing page first.")
         return
 
     spectral_dim = da_final.dims[-1]
     spatial_dims = [d for d in da_final.dims if d != spectral_dim]
+
+    # The band table spans the full page width (seven numeric columns are unreadable
+    # squeezed into the left third), but it needs the display unit and the target
+    # spectrum, which the left column below produces. So its slot is reserved here and
+    # filled after the left column has run.
+    band_slot = st.container()
+    left, right = st.columns([1, 2], gap="medium")
 
     with left:
         with st.container(border=True):
@@ -301,110 +631,12 @@ def render_deconvolution_page() -> None:
 
             # Fitting on this page always runs in energy space, regardless of the
             # file's native storage unit (Nanometer/ElectronVolt) or the Display
-            # selector above — those still only affect what's drawn on the chart.
+            # selector above — those still only affect what's drawn on the chart and
+            # which unit the band table is typed in.
             target_x = convert_x(
                 target_x, spectral_dim, "energy", laser_nm,
                 src_unit=ds.spectral_unit, native_type=ds.spectral_units,
             )
-
-        unit_label = "eV"
-        with st.container(border=True):
-            st.markdown('<p class="section-header">Band Parameters</p>', unsafe_allow_html=True)
-            st.caption("Positions are in energy units (eV) — fitting always runs on the energy axis, independent of this file's stored units or the Display selector above.")
-
-            preset_choice = st.selectbox(
-                "Load preset", ["— none —", *list_preset_materials()], key="deconv_preset_select",
-            )
-            if preset_choice != "— none —":
-                presets = get_preset_bands(preset_choice)
-                st.caption(
-                    f"Each band loads with a center bound of up to ±{_PRESET_BOUND_HALF_WIDTH_NM:.0f} nm "
-                    "around its literature position, narrowed near closely-spaced neighbors so "
-                    "bands can't swap which peak they claim."
-                )
-                st.dataframe(
-                    [
-                        {
-                            "Label": p.label,
-                            "λ (nm)": p.wavelength_nm,
-                            "E (eV)": p.energy_ev,
-                            "Assignment": p.assignment + (" (tentative)" if p.tentative else ""),
-                        }
-                        for p in presets
-                    ],
-                    width="stretch",
-                    hide_index=True,
-                )
-                if st.button(f"Add {len(presets)} bands from {preset_choice}", key="deconv_add_preset"):
-                    _append_bands(_preset_rows_to_table_rows(presets))
-
-            qc1, qc2, qc3, qc4 = st.columns([2, 2, 1, 1])
-            qa_center = qc1.number_input(
-                f"Quick-add center ({unit_label})",
-                value=float(np.median(target_x)) if len(target_x) else 0.0,
-                key="deconv_quick_add_center",
-            )
-            qa_label = qc2.text_input("Label (optional)", key="deconv_quick_add_label")
-            qc3.markdown("<br>", unsafe_allow_html=True)
-            if qc3.button("Add band", key="deconv_quick_add_button"):
-                _append_bands([{
-                    "label": qa_label or None, "center_guess": qa_center,
-                    "center_min": None, "center_max": None,
-                    "sigma_guess": None, "sigma_min": None, "sigma_max": None,
-                }])
-            qc4.markdown("<br>", unsafe_allow_html=True)
-            if qc4.button("Clear all", key="deconv_clear_bands_button"):
-                _reset_bands_table([])
-
-            current_rows = st.session_state.get("deconv_bands_table") or []
-            if current_rows:
-                def _row_label(i: int) -> str:
-                    row = current_rows[i]
-                    label = row.get("label") or f"Band {i + 1}"
-                    center = _none_or_float(row.get("center_guess"))
-                    return f"{label} ({center:.2f} {unit_label})" if center is not None else label
-
-                rc1, rc2 = st.columns([3, 1])
-                to_remove = rc1.multiselect(
-                    "Remove bands", options=list(range(len(current_rows))),
-                    format_func=_row_label, key="deconv_remove_band_select",
-                )
-                rc2.markdown("<br>", unsafe_allow_html=True)
-                if rc2.button("Remove", key="deconv_remove_band_button", disabled=not to_remove):
-                    remaining = [row for i, row in enumerate(current_rows) if i not in to_remove]
-                    _reset_bands_table(remaining)
-                    st.session_state.pop("deconv_remove_band_select", None)
-                    if st.session_state.get("sl_deconv_result_file") == file_name:
-                        remaining_bands = _bands_from_table(remaining)
-                        if remaining_bands:
-                            try:
-                                new_fit_result = PeakFitter().fit(target_x, target_y, remaining_bands)
-                            except (ValueError, NotImplementedError) as exc:
-                                st.error(f"Fit failed: {exc}")
-                            else:
-                                st.session_state["sl_deconv_result"] = new_fit_result
-                        else:
-                            st.session_state.pop("sl_deconv_result", None)
-                            st.session_state.pop("sl_deconv_result_file", None)
-                    st.rerun()
-
-            bands_table = st.data_editor(
-                st.session_state.get("deconv_bands_table", _default_bands_table(target_x)),
-                num_rows="dynamic",
-                column_config={
-                    "label":        st.column_config.TextColumn("Label"),
-                    "center_guess": st.column_config.NumberColumn(f"Center guess ({unit_label})", required=True),
-                    "center_min":   st.column_config.NumberColumn(f"Center min ({unit_label})"),
-                    "center_max":   st.column_config.NumberColumn(f"Center max ({unit_label})"),
-                    "sigma_guess":  st.column_config.NumberColumn("Sigma guess (auto if blank)"),
-                    "sigma_min":    st.column_config.NumberColumn("Sigma min"),
-                    "sigma_max":    st.column_config.NumberColumn("Sigma max"),
-                },
-                column_order=_BAND_COLUMNS,
-                key="deconv_bands_editor",
-            )
-            st.session_state["deconv_bands_table"] = bands_table
-            fit_clicked = st.button("Fit", key="deconv_fit_button", type="primary")
 
         with st.container(border=True):
             st.markdown('<p class="section-header">Full-Map Batch Fit</p>', unsafe_allow_html=True)
@@ -419,25 +651,25 @@ def render_deconvolution_page() -> None:
                 batch_clicked = False
                 st.caption("Full-map batch fit requires a map-scan file.")
 
+    if "deconv_bands_table" not in st.session_state:
+        _set_bands(_default_bands_table(target_x))
+
+    units = _BandUnits(spectral_dim, x_unit, laser_nm, ds.spectral_unit)
+    with band_slot:
+        band_rows, fit_clicked = _render_band_editor(units, file_name)
+
     with right:
         if fit_clicked:
-            bands = _bands_from_table(bands_table)
-            if not bands:
-                st.error("Add at least one band with a center guess before fitting.")
-            else:
-                try:
-                    fit_result = PeakFitter().fit(target_x, target_y, bands)
-                except (ValueError, NotImplementedError) as exc:
-                    st.error(f"Fit failed: {exc}")
-                else:
-                    st.session_state["sl_deconv_result"] = fit_result
-                    st.session_state["sl_deconv_result_file"] = file_name
+            _run_fit(target_x, target_y, band_rows, file_name)
 
         fit_result = st.session_state.get("sl_deconv_result")
         has_fit = fit_result is not None and st.session_state.get("sl_deconv_result_file") == file_name
 
         fit_title = st.text_input("Chart title", value="Peak Deconvolution", key="deconv_fit_title")
-        st.caption("Click anywhere on the plot to drop a new band there and (re)fit.")
+        st.caption(
+            "Click anywhere on the plot to drop a new band there — it lands in the table above, "
+            "and refits if a fit is already showing."
+        )
         # fit_result.x / target_x / band centers are always eV (fitting always runs in
         # energy space — see above), so native_type is forced to ElectronVolt here
         # regardless of ds.spectral_units: these chart builders need to know the
@@ -452,7 +684,7 @@ def render_deconvolution_page() -> None:
             )
         else:
             band_centers_ev = [
-                c for row in bands_table
+                c for row in band_rows
                 if (c := _none_or_float(row.get("center_guess"))) is not None
             ]
             chart_options = make_deconv_preview_echarts(
@@ -474,25 +706,19 @@ def render_deconvolution_page() -> None:
         if click_value is not None:
             # The click lands in whatever unit the chart is currently displayed in
             # (x_unit); convert it into eV (forcing native_type="ElectronVolt" as the
-            # conversion target) since the band table is always in eV now.
-            x_ev = convert_x_to_native(
-                click_value["x"], spectral_dim, x_unit, laser_nm,
-                src_unit=ds.spectral_unit, native_type="ElectronVolt",
-            )
+            # conversion target) since band rows are stored in eV whatever the editor
+            # is showing.
+            x_ev = units.to_ev(click_value["x"])
             _append_bands([{
-                "label": None, "center_guess": round(x_ev, 4),
+                "label": None, "center_guess": round(x_ev, 6),
                 "center_min": None, "center_max": None,
                 "sigma_guess": None, "sigma_min": None, "sigma_max": None,
             }])
-            new_bands = _bands_from_table(st.session_state["deconv_bands_table"])
-            if new_bands:
-                try:
-                    new_fit_result = PeakFitter().fit(target_x, target_y, new_bands)
-                except (ValueError, NotImplementedError) as exc:
-                    st.error(f"Fit failed: {exc}")
-                else:
-                    st.session_state["sl_deconv_result"] = new_fit_result
-                    st.session_state["sl_deconv_result_file"] = file_name
+            # Only refit when a fit is already on screen — on a first pass the click is
+            # just staging a position, and a surprise fit there hides the preview lines
+            # the user is placing.
+            if has_fit:
+                _run_fit(target_x, target_y, st.session_state["deconv_bands_table"], file_name)
             st.rerun()
 
         if has_fit:
@@ -519,7 +745,7 @@ def render_deconvolution_page() -> None:
             )
 
         if batch_clicked:
-            bands = _bands_from_table(bands_table)
+            bands = _bands_from_table(band_rows)
             if not bands:
                 st.error("Add at least one band with a center guess before fitting.")
             else:

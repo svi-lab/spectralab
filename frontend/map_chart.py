@@ -12,6 +12,7 @@ import xarray as xr
 from PIL import Image as PILImage
 
 from .charts import UNIT_LABELS, convert_x
+from .exclusion import DISPLAY_BASE
 
 FS_TITLE = 26
 FS_AXIS  = 22
@@ -19,7 +20,7 @@ FS_TICK  = 18
 FS_CBAR  = 18
 
 
-def _colorbar(title: str) -> dict:
+def _colorbar(title: str, tickformat: str = "") -> dict:
     return dict(
         orientation="h",
         x=0.5,
@@ -30,7 +31,54 @@ def _colorbar(title: str) -> dict:
         len=0.9,
         title=dict(text=title, side="bottom", font=dict(size=FS_CBAR)),
         tickfont=dict(size=FS_TICK),
+        tickformat=tickformat,
     )
+
+
+def value_formats(z: np.ndarray) -> tuple[str, str]:
+    """``(colorbar_tickformat, hover_format)`` chosen from the map's magnitude.
+
+    One rule for every scalar map (integrated intensity, NMF/MCR abundance,
+    fitted band parameters), so a number reads the same way wherever it
+    appears. The ladder, keyed on the largest absolute value in the map:
+
+    ============ ==================== =========================
+    magnitude    colorbar             example
+    ============ ==================== =========================
+    < 1          3 decimals           ``0.042``
+    1 – 1e3      2 decimals           ``17.50``
+    1e3 – 1e6    thousands separator  ``124,730``
+    ≥ 1e6        SI prefix, 2 decimals ``1.25M``, ``12.34M``
+    ============ ==================== =========================
+
+    Two implementation notes, both forced by how plotly formats numbers:
+
+    * ``exponentformat="SI"`` cannot be combined with an explicit
+      ``tickformat`` — plotly.js returns the d3-formatted value before it ever
+      looks at the exponent settings. So the SI tier is expressed as d3's own
+      ``s`` type instead. ``s`` takes *significant digits*, not decimals, so
+      the precision is sized from the value's position within its SI decade
+      (``1.25M`` needs 3, ``12.34M`` needs 4, ``123.45M`` needs 5) — that is
+      what keeps "2 decimals" true across the whole tier.
+    * The hover keeps full digits with separators in the SI tier rather than
+      reusing ``s``: hover is a per-pixel readout, and ``s`` would render a
+      near-zero pixel on a large map as ``500m`` (milli), which reads as
+      nonsense next to a colorbar in ``M``.
+    """
+    arr = np.asarray(z, dtype=float)
+    finite = arr[np.isfinite(arr)]
+    peak = float(np.max(np.abs(finite))) if finite.size else 0.0
+
+    if peak < 1:
+        return ".3f", ".3f"
+    if peak < 1e3:
+        return ".2f", ".2f"
+    if peak < 1e6:
+        return ",.0f", ",.0f"
+    # Digits before the decimal point once the SI prefix is applied: 1 for
+    # 1.25M, 2 for 12.34M, 3 for 123.45M — plus the 2 decimals we want.
+    mantissa_digits = int(np.floor(np.log10(peak))) % 3 + 1
+    return f".{mantissa_digits + 2}s", ",.0f"
 
 
 @st.cache_data(show_spinner=False, max_entries=8)
@@ -162,7 +210,7 @@ def make_scalar_map_fig(
     cbar_label: str = "",
     colorscale: str = "Viridis",
     title: str = "",
-    value_format: str = ".4g",
+    value_format: str | None = None,
     map_opacity: float = 0.75,
 ) -> go.Figure:
     """Heatmap of an arbitrary precomputed 2-D scalar overlaid on the
@@ -183,16 +231,19 @@ def make_scalar_map_fig(
     image_arr, image_meta:
         Same as :func:`make_map_fig`.
     value_format:
-        Plotly hover number format for ``z``. Defaults to 4 significant
-        figures, suitable for quantities of unknown scale (abundances,
-        band centers, amplitudes); ``make_map_fig`` passes ``".3f"`` to
-        keep its original fixed-decimal display unchanged.
+        Override for the hover number format. ``None`` (the default, and what
+        every caller uses) derives both the hover and the colorbar format from
+        the data — see :func:`value_formats`. Pass a d3 format string only for
+        a quantity that needs a fixed presentation regardless of magnitude.
     map_opacity:
         Opacity of the heatmap trace, drawn above the white-light image.
         Ignored (forced to 1.0) when there is no image to blend with.
     """
     if image_arr is None or image_meta is None:
         map_opacity = 1.0
+    tick_fmt, hover_fmt = value_formats(z)
+    if value_format is not None:
+        hover_fmt = value_format
     fig = go.Figure()
     fig.add_trace(go.Heatmap(
         x=col_coords,
@@ -200,10 +251,10 @@ def make_scalar_map_fig(
         z=z,
         opacity=map_opacity,
         colorscale=colorscale,
-        colorbar=_colorbar(cbar_label),
+        colorbar=_colorbar(cbar_label, tick_fmt),
         hovertemplate=(
             "x: %{x:.1f} µm<br>y: %{y:.1f} µm<br>"
-            + cbar_label.split("(")[0].strip() + f": %{{z:{value_format}}}<extra></extra>"
+            + cbar_label.split("(")[0].strip() + f": %{{z:{hover_fmt}}}<extra></extra>"
         ),
         zsmooth=False,
     ))
@@ -233,6 +284,9 @@ def make_selection_map_fig(
     map_opacity: float = 0.75,
 ) -> go.Figure:
     """Pixel-pickable map: intensity heatmap + one selectable marker per pixel.
+
+    Hover labels show 1-based row/column (:data:`frontend.exclusion.DISPLAY_BASE`)
+    to match the Exclude Spectra tab's index fields.
 
     ``go.Heatmap`` does not participate in Plotly box/lasso selection, so the
     heatmap is context only (``hoverinfo="skip"``) and a single ``Scattergl``
@@ -286,7 +340,11 @@ def make_selection_map_fig(
             color=colors.tolist(),
             line=dict(width=0),
         ),
-        customdata=np.column_stack([r_idx, c_idx]),
+        # customdata is the *display* (1-based) pixel address — a hovertemplate
+        # cannot do arithmetic, so the offset has to be baked into the data.
+        # Readers convert back with ``- DISPLAY_BASE`` (see
+        # pages/preprocessing.py::_selected_flat_indices).
+        customdata=np.column_stack([r_idx + DISPLAY_BASE, c_idx + DISPLAY_BASE]),
         hovertemplate="row %{customdata[0]}, col %{customdata[1]}<extra></extra>",
         showlegend=False,
         unselected=dict(marker=dict(opacity=1.0)),  # selection must not dim the rest
@@ -363,5 +421,5 @@ def make_map_fig(
     return make_scalar_map_fig(
         z, y_coords, x_coords, image_arr, image_meta,
         cbar_label=cbar_label, colorscale=colorscale, title=title,
-        value_format=".3f", map_opacity=map_opacity,
+        map_opacity=map_opacity,
     )

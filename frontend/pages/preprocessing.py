@@ -88,15 +88,18 @@ from ..controls import (
     render_map_display_controls,
 )
 from ..exclusion import (
+    DISPLAY_BASE,
     apply_selection,
     build_excl_params,
     clear_mask,
+    display_range,
     get_mask,
     has_undo,
     parse_index_spec,
     parse_pixel_spec,
     set_mask,
     spatial_shape,
+    to_display,
     undo,
 )
 from ..map_chart import make_selection_map_fig
@@ -358,23 +361,23 @@ def _render_exclusion_tab(loaded: dict[str, Any]) -> Any:
     if is_map:
         n_row, n_col = shape
         rows_txt = st.text_input(
-            "Rows", key="excl_rows", placeholder="e.g. 0-2, 47",
-            help=f"Whole map rows to {mode.lower()}. Valid: 0–{n_row - 1}.",
+            "Rows", key="excl_rows", placeholder="e.g. 1-3, 48",
+            help=f"Whole map rows to {mode.lower()}. Valid: {display_range(n_row)}.",
         )
         cols_txt = st.text_input(
-            "Columns", key="excl_cols", placeholder="e.g. 12, 30-33",
-            help=f"Whole map columns to {mode.lower()}. Valid: 0–{n_col - 1}.",
+            "Columns", key="excl_cols", placeholder="e.g. 13, 31-34",
+            help=f"Whole map columns to {mode.lower()}. Valid: {display_range(n_col)}.",
         )
         pixels_txt = st.text_input(
-            "Pixels (row, column)", key="excl_pixels", placeholder="e.g. (4,7), (9,2)",
+            "Pixels (row, column)", key="excl_pixels", placeholder="e.g. (5,8), (10,3)",
         )
         flat_txt = ""
     else:
         n_row, n_col = shape[0], 1
         rows_txt = cols_txt = pixels_txt = ""
         flat_txt = st.text_input(
-            "Spectra", key="excl_flat", placeholder="e.g. 0-3, 7, 10-12",
-            help=f"Spectrum indices to {mode.lower()}. Valid: 0–{shape[0] - 1}.",
+            "Spectra", key="excl_flat", placeholder="e.g. 1-4, 8, 11-13",
+            help=f"Spectrum indices to {mode.lower()}. Valid: {display_range(shape[0])}.",
         )
 
     col_apply, col_undo, col_clear = st.columns([2, 1, 1])
@@ -631,7 +634,9 @@ def _render_cd_removed_visual(slot, all_datasets: dict, loaded: dict[str, Any]) 
                 continue
 
             if mask.ndim == 1:
-                idx = np.flatnonzero(mask)
+                # Listed in display numbering — these are the same indices the
+                # Exclude Spectra tab's "Spectra" field takes.
+                idx = np.flatnonzero(mask) + DISPLAY_BASE
                 listed = ", ".join(map(str, idx[:_CD_MAX_LISTED]))
                 idx_note = f" (indices {listed}{'…' if idx.size > _CD_MAX_LISTED else ''})"
                 grid, valid = _wrap_line_mask(mask)
@@ -815,48 +820,60 @@ _BROWSE_MODES_LINE = [_BROWSE_ALL, _BROWSE_ONE]
 
 
 def _clamp_index_state(key: str, n: int) -> None:
-    """Keep a stepper's stored index inside [0, n-1].
+    """Keep a stepper's stored index inside the display range [1, n].
 
-    Needed because the index widgets outlive the file they were set for: a
-    switch to a smaller map (or a different scan geometry) would otherwise hand
-    st.number_input a value above its own max and raise.
+    The stepper state is stored in *display* numbering (the number_input is
+    bound straight to it by key, so what is stored is what is shown); callers
+    get the 0-based index back from :func:`_index_stepper`.
+
+    Clamping is needed because the index widgets outlive the file they were set
+    for: a switch to a smaller map (or a different scan geometry) would
+    otherwise hand st.number_input a value above its own max and raise.
     """
     if key not in st.session_state:
         return
     try:
-        st.session_state[key] = int(np.clip(int(st.session_state[key]), 0, max(n - 1, 0)))
+        st.session_state[key] = int(np.clip(
+            int(st.session_state[key]), DISPLAY_BASE, max(n - 1 + DISPLAY_BASE, DISPLAY_BASE)
+        ))
     except (TypeError, ValueError):
         del st.session_state[key]
 
 
 def _step_index(key: str, delta: int, n: int) -> None:
-    st.session_state[key] = int(
-        np.clip(int(st.session_state.get(key, 0)) + delta, 0, max(n - 1, 0))
-    )
+    st.session_state[key] = int(np.clip(
+        int(st.session_state.get(key, DISPLAY_BASE)) + delta,
+        DISPLAY_BASE,
+        max(n - 1 + DISPLAY_BASE, DISPLAY_BASE),
+    ))
 
 
 def _index_stepper(cols, label: str, key: str, n: int) -> int:
     """◀ / value / ▶ index picker rendered into three pre-made columns.
+
+    Shows 1-based numbers (:data:`DISPLAY_BASE`) and returns the 0-based index,
+    so it stays interchangeable with the Exclude Spectra tab's typed fields.
 
     The columns are passed in rather than created here: this widget already
     lives inside the page's right column, and Streamlit allows only one level
     of column nesting in the main area.
     """
     _clamp_index_state(key, n)
-    cur = int(st.session_state.get(key, 0))
+    lo, hi = DISPLAY_BASE, max(n - 1 + DISPLAY_BASE, DISPLAY_BASE)
+    cur = int(st.session_state.get(key, lo))
     c_prev, c_val, c_next = cols
     c_prev.button(
-        "◀", key=f"{key}_prev", width="stretch", disabled=cur <= 0,
+        "◀", key=f"{key}_prev", width="stretch", disabled=cur <= lo,
         on_click=_step_index, args=(key, -1, n),
     )
     val = c_val.number_input(
-        label, min_value=0, max_value=max(n - 1, 0), step=1, key=key,
+        label, min_value=lo, max_value=hi, step=1, key=key,
     )
     c_next.button(
-        "▶", key=f"{key}_next", width="stretch", disabled=cur >= n - 1,
+        "▶", key=f"{key}_next", width="stretch", disabled=cur >= hi,
         on_click=_step_index, args=(key, +1, n),
     )
-    return int(val)
+    return int(val) - DISPLAY_BASE
 
 
 def _render_browse_controls(da) -> tuple[Any, str, str]:
@@ -891,7 +908,7 @@ def _render_browse_controls(da) -> tuple[Any, str, str]:
         n = int(da.sizes[spatial[0]])
         cols = st.columns([1, 3, 1, 8], vertical_alignment="bottom")
         i = _index_stepper(cols[:3], "Spectrum", "final_browse_i", n)
-        return da.isel({spatial[0]: i}), mode, f"spectrum {i}"
+        return da.isel({spatial[0]: i}), mode, f"spectrum {to_display(i)}"
 
     n_row, n_col = int(da.sizes[spatial[0]]), int(da.sizes[spatial[1]])
 
@@ -900,16 +917,19 @@ def _render_browse_controls(da) -> tuple[Any, str, str]:
         r = _index_stepper(cols[:3], "Row", "final_browse_row", n_row)
         c = _index_stepper(cols[3:6], "Column", "final_browse_col", n_col)
         subset = da.isel({spatial[0]: r, spatial[1]: c})
-        return subset, mode, f"pixel ({r}, {c}) · flat index {r * n_col + c}"
+        return subset, mode, (
+            f"pixel ({to_display(r)}, {to_display(c)}) · "
+            f"flat index {to_display(r * n_col + c)}"
+        )
 
     if mode == _BROWSE_ROW:
         cols = st.columns([1, 3, 1, 8], vertical_alignment="bottom")
         r = _index_stepper(cols[:3], "Row", "final_browse_row", n_row)
-        return da.isel({spatial[0]: r}), mode, f"row {r} ({n_col} spectra)"
+        return da.isel({spatial[0]: r}), mode, f"row {to_display(r)} ({n_col} spectra)"
 
     cols = st.columns([1, 3, 1, 8], vertical_alignment="bottom")
     c = _index_stepper(cols[:3], "Column", "final_browse_col", n_col)
-    return da.isel({spatial[1]: c}), mode, f"column {c} ({n_row} spectra)"
+    return da.isel({spatial[1]: c}), mode, f"column {to_display(c)} ({n_row} spectra)"
 
 
 def _render_final_tab(
@@ -1048,7 +1068,8 @@ def _selected_flat_indices(points: list[dict], n_col: int) -> list[int]:
 
     The scatter layer is curve 1 and covers every pixel in row-major order, so
     ``point_index`` already is the flat index; ``customdata`` carries (row,
-    column) as the authoritative cross-check.
+    column) as the authoritative cross-check — in *display* numbering, since it
+    doubles as the hover label, hence the ``- DISPLAY_BASE``.
     """
     out: list[int] = []
     for p in points:
@@ -1056,7 +1077,9 @@ def _selected_flat_indices(points: list[dict], n_col: int) -> list[int]:
             continue
         cd = p.get("customdata")
         if isinstance(cd, (list, tuple)) and len(cd) >= 2:
-            out.append(int(cd[0]) * n_col + int(cd[1]))
+            r = int(cd[0]) - DISPLAY_BASE
+            c = int(cd[1]) - DISPLAY_BASE
+            out.append(r * n_col + c)
             continue
         i = p.get("point_index", p.get("point_number"))
         if i is not None:

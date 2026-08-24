@@ -644,8 +644,10 @@ def make_final_echarts(
         norm_vals = idx_sample.astype(float) / max(n_spectra - 1, 1)
         palette = _sample_colorscale(VIRIDIS, norm_vals.tolist())
         vm_colors = VIRIDIS
-        vmin_v, vmax_v = 0.0, float(n_spectra - 1)
-        vm_text = [str(n_spectra - 1), "0"]
+        # Colorbar is labelled 1..n to match the 1-based spectrum numbering the
+        # rest of the app shows; the colours themselves come from norm_vals.
+        vmin_v, vmax_v = 1.0, float(n_spectra)
+        vm_text = [str(n_spectra), "1"]
 
     series: list[dict] = []
     for i, sp_i in enumerate(idx_sample):

@@ -14,6 +14,12 @@ handed to the pipeline through ``pipeline_params["excl"]["masks"]``. Being part
 of the params dict means every existing ``@st.cache_data`` that already takes
 ``pipeline_params`` as a key invalidates correctly with no extra plumbing.
 
+Everything the *user* sees is 1-based (:data:`DISPLAY_BASE`) — the typed
+index fields, the chart hovers and the browse labels — while every array,
+mask and flat index stays 0-based. The conversion happens only in
+:func:`parse_index_spec` / :func:`parse_pixel_spec` (in) and
+:func:`to_display` / :func:`display_range` (out).
+
 Everything here except :func:`get_mask` / :func:`set_mask` / :func:`undo` /
 :func:`build_excl_params` is pure — no Streamlit, no session state — so the
 parsing and mask algebra can be exercised directly.
@@ -32,6 +38,21 @@ import xarray as xr
 _STATE_KEY = "sl_excluded"
 _UNDO_KEY = "sl_excluded_undo"
 _UNDO_DEPTH = 20
+
+#: Index of the first spectrum/row/column *as the user sees it*. Masks, flat
+#: indices and every array operation below stay 0-based — the offset is applied
+#: at the two edges of the module (parsing in, labels out) and nowhere else.
+DISPLAY_BASE = 1
+
+
+def to_display(i: int) -> int:
+    """0-based internal index → the number shown in the UI."""
+    return int(i) + DISPLAY_BASE
+
+
+def display_range(n: int) -> str:
+    """Readable ``"1\u20135"`` inclusive range for ``n`` items, in display numbering."""
+    return f"{DISPLAY_BASE}\u2013{n - 1 + DISPLAY_BASE}"
 
 
 # ---------------------------------------------------------------------------
@@ -53,11 +74,13 @@ _PIXEL_RE = re.compile(r"\(?\s*(\d+)\s*[,;]\s*(\d+)\s*\)?")
 
 
 def parse_index_spec(text: str, n_max: int) -> list[int]:
-    """Parse ``"0-3, 7, 10-12"`` into ``[0,1,2,3,7,10,11,12]``.
+    """Parse ``"1-4, 8, 11-13"`` into 0-based ``[0,1,2,3,7,10,11,12]``.
 
-    Accepts commas and/or whitespace as separators and inclusive ``a-b``
-    ranges (in either order). Raises ``ValueError`` with a readable message on
-    malformed tokens or indices outside ``[0, n_max)``.
+    The text is written by the user, so it is in display numbering
+    (:data:`DISPLAY_BASE`); the returned indices are the 0-based ones the mask
+    is addressed with. Accepts commas and/or whitespace as separators and
+    inclusive ``a-b`` ranges (in either order). Raises ``ValueError`` with a
+    readable message on malformed tokens or indices outside the valid range.
     """
     if not text or not text.strip():
         return []
@@ -76,20 +99,24 @@ def parse_index_spec(text: str, n_max: int) -> list[int]:
             values = (int(token),)
         else:
             raise ValueError(
-                f"Could not read {token!r} — use indices and ranges, e.g. '0-3, 7, 10-12'."
+                f"Could not read {token!r} — use indices and ranges, e.g. '1-4, 8, 11-13'."
             )
         for v in values:
-            if not 0 <= v < n_max:
-                raise ValueError(f"Index {v} is out of range (valid: 0–{n_max - 1}).")
-            out.add(v)
+            if not DISPLAY_BASE <= v < n_max + DISPLAY_BASE:
+                raise ValueError(
+                    f"Index {v} is out of range (valid: {display_range(n_max)})."
+                )
+            out.add(v - DISPLAY_BASE)
     return sorted(out)
 
 
 def parse_pixel_spec(text: str, n_row: int, n_col: int) -> list[tuple[int, int]]:
-    """Parse ``"(4,7), (9,2)"`` into ``[(4, 7), (9, 2)]`` — (row, column).
+    """Parse ``"(5,8), (10,3)"`` into 0-based ``[(4, 7), (9, 2)]`` — (row, column).
 
-    Parentheses are optional; ``4,7 9,2`` parses the same. Raises
-    ``ValueError`` on out-of-range coordinates or leftover unparsable text.
+    Like :func:`parse_index_spec`, the text is in display numbering and the
+    returned pairs are 0-based. Parentheses are optional; ``5,8 10,3`` parses
+    the same. Raises ``ValueError`` on out-of-range coordinates or leftover
+    unparsable text.
     """
     if not text or not text.strip():
         return []
@@ -98,22 +125,22 @@ def parse_pixel_spec(text: str, n_row: int, n_col: int) -> list[tuple[int, int]]
     consumed = 0
     for m in _PIXEL_RE.finditer(text):
         r, c = int(m.group(1)), int(m.group(2))
-        if not 0 <= r < n_row:
-            raise ValueError(f"Row {r} is out of range (valid: 0–{n_row - 1}).")
-        if not 0 <= c < n_col:
-            raise ValueError(f"Column {c} is out of range (valid: 0–{n_col - 1}).")
-        out.append((r, c))
+        if not DISPLAY_BASE <= r < n_row + DISPLAY_BASE:
+            raise ValueError(f"Row {r} is out of range (valid: {display_range(n_row)}).")
+        if not DISPLAY_BASE <= c < n_col + DISPLAY_BASE:
+            raise ValueError(f"Column {c} is out of range (valid: {display_range(n_col)}).")
+        out.append((r - DISPLAY_BASE, c - DISPLAY_BASE))
         consumed += len(m.group(0))
 
     if not out:
         raise ValueError(
-            f"Could not read {text.strip()!r} — use (row, column) pairs, e.g. '(4,7), (9,2)'."
+            f"Could not read {text.strip()!r} — use (row, column) pairs, e.g. '(5,8), (10,3)'."
         )
     # Anything that is not a separator between matches is a typo worth flagging.
     leftover = re.sub(r"[(),;\s\d]", "", text)
     if leftover:
         raise ValueError(
-            f"Unexpected characters {leftover!r} — use (row, column) pairs, e.g. '(4,7), (9,2)'."
+            f"Unexpected characters {leftover!r} — use (row, column) pairs, e.g. '(5,8), (10,3)'."
         )
     return out
 
