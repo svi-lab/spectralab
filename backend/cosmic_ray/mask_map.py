@@ -208,6 +208,7 @@ def correct_cosmic_rays_on_map_cube(
         values = flat_2d_work.reshape(orig_map_shape)
 
     preprocessed, per_spectrum_median = min_subtract_median_normalize_map_cube(values)
+    per_spec_min = np.min(np.asarray(values, dtype=float), axis=-1, keepdims=True)
     disk = morphology.disk(disk_radius)[:, :, np.newaxis]
     spatial_median_reference = filters.median(preprocessed, footprint=disk)
     residual = preprocessed - spatial_median_reference
@@ -237,7 +238,9 @@ def correct_cosmic_rays_on_map_cube(
     corrected_norm = interpolate_cosmic_ray_regions_spectrally(
         preprocessed, spatial_median_reference, dilated
     )
-    corrected_physical_units = np.maximum(corrected_norm * per_spectrum_median, 0.0)
+    corrected_physical_units = np.maximum(
+        corrected_norm * per_spectrum_median + per_spec_min, 0.0
+    )
     if has_nan_map:
         corrected_physical_units.reshape(-1, orig_map_shape[-1])[nan_pix] = np.nan
     meta: dict[str, Any] = {
