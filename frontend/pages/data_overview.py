@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Data page — one block per loaded sample.
 
 Layout
@@ -48,6 +47,7 @@ from backend.optics import (
     film_stack_summary,
     lookup_substrate_nk,
 )
+
 from ..export_utils import mean_spectrum_to_npz, spectra_to_npz
 from ..pipeline_cache import default_pipeline_params, final_da, get_finals
 
@@ -65,9 +65,7 @@ def _draw_overlay_cached(
 
 
 @st.cache_data(show_spinner=False, max_entries=16)
-def _full_npz_cached(
-    file_hash: str, pipeline_params: dict, _da, excluded_mask=None
-) -> bytes:
+def _full_npz_cached(file_hash: str, pipeline_params: dict, _da, excluded_mask=None) -> bytes:
     # excluded_mask is hashed (no underscore prefix) so the payload is rebuilt
     # when the user edits the mask; pipeline_params carries it too, but only as
     # part of a dict whose other keys change independently.
@@ -247,8 +245,7 @@ def _render_sample_structure_card(name: str, entry: dict) -> None:
 
         if ds.laser_nm is None:
             st.warning(
-                "Laser wavelength not found in this file — "
-                "optical calculations unavailable."
+                "Laser wavelength not found in this file — optical calculations unavailable."
             )
             ss_store[name] = {
                 **prev,
@@ -274,8 +271,7 @@ def _render_sample_structure_card(name: str, entry: dict) -> None:
             substrate_options = SUBSTRATE_LABELS
             prev_sub = prev.get("substrate", "Si")
             default_sub_idx = (
-                substrate_options.index(prev_sub)
-                if prev_sub in substrate_options else 0
+                substrate_options.index(prev_sub) if prev_sub in substrate_options else 0
             )
 
         substrate = st.selectbox(
@@ -293,18 +289,29 @@ def _render_sample_structure_card(name: str, entry: dict) -> None:
         else:
             c1, c2 = st.columns(2)
             sub_n = c1.number_input(
-                "Substrate n", min_value=1.0, value=float(prev.get("sub_n") or 1.5),
-                step=0.01, format="%.4f", key=f"ss_{h}_sub_n",
+                "Substrate n",
+                min_value=1.0,
+                value=float(prev.get("sub_n") or 1.5),
+                step=0.01,
+                format="%.4f",
+                key=f"ss_{h}_sub_n",
             )
             sub_k = c2.number_input(
-                "Substrate k", min_value=0.0, value=float(prev.get("sub_k") or 0.0),
-                step=0.001, format="%.4f", key=f"ss_{h}_sub_k",
+                "Substrate k",
+                min_value=0.0,
+                value=float(prev.get("sub_k") or 0.0),
+                step=0.001,
+                format="%.4f",
+                key=f"ss_{h}_sub_k",
             )
 
         sub_d_mm = st.number_input(
-            "Substrate thickness (mm)", min_value=0.01,
+            "Substrate thickness (mm)",
+            min_value=0.01,
             value=float(prev.get("sub_d_mm", 1.0)),
-            step=0.1, format="%.2f", key=f"ss_{h}_sub_d",
+            step=0.1,
+            format="%.2f",
+            key=f"ss_{h}_sub_d",
         )
 
         # ── Bare substrate: substrate-only summary, no film ────────────────
@@ -312,7 +319,9 @@ def _render_sample_structure_card(name: str, entry: dict) -> None:
             try:
                 bare = bare_substrate_summary(
                     laser_nm=ds.laser_nm,
-                    sub_n=sub_n, sub_k=sub_k, sub_d_mm=sub_d_mm,
+                    sub_n=sub_n,
+                    sub_k=sub_k,
+                    sub_d_mm=sub_d_mm,
                 )
             except Exception:
                 bare = None
@@ -321,7 +330,9 @@ def _render_sample_structure_card(name: str, entry: dict) -> None:
                 **prev,
                 "sample_type": "substrate",
                 "substrate": substrate,
-                "sub_n": sub_n, "sub_k": sub_k, "sub_d_mm": sub_d_mm,
+                "sub_n": sub_n,
+                "sub_k": sub_k,
+                "sub_d_mm": sub_d_mm,
                 "laser_nm": ds.laser_nm,
                 "enabled": True,
                 "summary": bare,
@@ -333,26 +344,38 @@ def _render_sample_structure_card(name: str, entry: dict) -> None:
         # ── Film inputs ────────────────────────────────────────────────────
         col_d, col_n, col_k = st.columns(3)
         film_d_nm = col_d.number_input(
-            "Film thickness (nm)", min_value=1.0,
+            "Film thickness (nm)",
+            min_value=1.0,
             value=float(prev.get("film_d_nm", 200.0)),
-            step=10.0, key=f"ss_{h}_film_d",
+            step=10.0,
+            key=f"ss_{h}_film_d",
         )
         film_n = col_n.number_input(
-            "Film n", min_value=1.0,
+            "Film n",
+            min_value=1.0,
             value=float(prev.get("film_n", 2.0)),
-            step=0.01, format="%.4f", key=f"ss_{h}_film_n",
+            step=0.01,
+            format="%.4f",
+            key=f"ss_{h}_film_n",
         )
         film_k = col_k.number_input(
-            "Film k", min_value=0.0,
+            "Film k",
+            min_value=0.0,
             value=float(prev.get("film_k", 0.1)),
-            step=0.001, format="%.4f", key=f"ss_{h}_film_k",
+            step=0.001,
+            format="%.4f",
+            key=f"ss_{h}_film_k",
         )
 
         try:
             summary = film_stack_summary(
                 laser_nm=ds.laser_nm,
-                film_n=film_n, film_k=film_k, film_d_nm=film_d_nm,
-                sub_n=sub_n, sub_k=sub_k, sub_d_mm=sub_d_mm,
+                film_n=film_n,
+                film_k=film_k,
+                film_d_nm=film_d_nm,
+                sub_n=sub_n,
+                sub_k=sub_k,
+                sub_d_mm=sub_d_mm,
             )
         except Exception:
             summary = None
@@ -360,9 +383,13 @@ def _render_sample_structure_card(name: str, entry: dict) -> None:
         ss_store[name] = {
             **prev,
             "sample_type": "film",
-            "film_d_nm": film_d_nm, "film_n": film_n, "film_k": film_k,
+            "film_d_nm": film_d_nm,
+            "film_n": film_n,
+            "film_k": film_k,
             "substrate": substrate,
-            "sub_n": sub_n, "sub_k": sub_k, "sub_d_mm": sub_d_mm,
+            "sub_n": sub_n,
+            "sub_k": sub_k,
+            "sub_d_mm": sub_d_mm,
             "laser_nm": ds.laser_nm,
             "enabled": True,
             "summary": summary,
@@ -384,10 +411,7 @@ def _export_stem(name: str) -> str:
 
 def _pipeline_export_caption(params: dict | None) -> str:
     if params is None:
-        return (
-            "No preprocessing set — visit the Preprocessing page first; "
-            "exporting raw data."
-        )
+        return "No preprocessing set — visit the Preprocessing page first; exporting raw data."
     stages: list[str] = []
     if params.get("norm1_enabled") or params.get("norm2_enabled") or params.get("norm3_enabled"):
         stages.append("normalization")
@@ -477,7 +501,5 @@ def render_data_page() -> None:
                 _render_sample_block(name, entry, da_final, params)
         else:
             with st.container(border=True):
-                st.markdown(
-                    f'<p class="section-header">{name}</p>', unsafe_allow_html=True
-                )
+                st.markdown(f'<p class="section-header">{name}</p>', unsafe_allow_html=True)
                 _render_sample_block(name, entry, da_final, params)

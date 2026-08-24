@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """High-level cosmic-ray removal: :class:`CosmicRayRemover`."""
 
 from __future__ import annotations
@@ -11,8 +10,9 @@ import xarray as xr
 
 from _shared._spectral import resolve_spectral_dim, with_new_values
 from _shared.utils import ensure_in_memory
+
+from .harmonic import grating_artifact_correct_dataarray, harmonic_correct_dataarray
 from .mask_1d import remove_cosmic_rays_1d
-from .harmonic import harmonic_correct_dataarray, grating_artifact_correct_dataarray
 from .mask_map import (
     correct_cosmic_rays_collection,
     correct_cosmic_rays_on_map_cube,
@@ -128,9 +128,7 @@ class CosmicRayRemover:
 
     def __post_init__(self) -> None:
         if self.spike_width < 3 or self.spike_width % 2 == 0:
-            raise ValueError(
-                f"spike_width must be odd and >= 3, got {self.spike_width}"
-            )
+            raise ValueError(f"spike_width must be odd and >= 3, got {self.spike_width}")
         if self.spike_threshold <= 0 or not np.isfinite(self.spike_threshold):
             raise ValueError("spike_threshold must be positive and finite")
         if self.spike_passes < 1:
@@ -144,10 +142,7 @@ class CosmicRayRemover:
         if self.map_disk_radius < 1:
             raise ValueError("map_disk_radius must be >= 1")
         if self.map_method not in ("median", "pca"):
-            raise ValueError(
-                f"map_method must be 'median' or 'pca', "
-                f"got {self.map_method!r}"
-            )
+            raise ValueError(f"map_method must be 'median' or 'pca', got {self.map_method!r}")
         if self.map_n_components < 1:
             raise ValueError("map_n_components must be >= 1")
 
@@ -246,7 +241,9 @@ class CosmicRayRemover:
 
         if ndim == 1:
             resolve_spectral_dim(da, self.spectral_dim)
-            return self._apply_1d(da, np.asarray(da.values, dtype=float), want_diagnostics=want_diagnostics)
+            return self._apply_1d(
+                da, np.asarray(da.values, dtype=float), want_diagnostics=want_diagnostics
+            )
 
         if ndim == 2:
             n_spectra = da.shape[0]
@@ -257,19 +254,13 @@ class CosmicRayRemover:
                     want_diagnostics=want_diagnostics,
                 )
             if self.force_1d or n_spectra < _COLLECTION_THRESHOLD:
-                return self._apply_loop_1d(
-                    da, want_diagnostics=want_diagnostics
-                )
-            return self._apply_collection(
-                da, want_diagnostics=want_diagnostics
-            )
+                return self._apply_loop_1d(da, want_diagnostics=want_diagnostics)
+            return self._apply_collection(da, want_diagnostics=want_diagnostics)
 
         if ndim == 3:
             n_spectra = da.shape[0] * da.shape[1]
             if self.force_1d or n_spectra < _COLLECTION_THRESHOLD:
-                return self._apply_loop_1d(
-                    da, want_diagnostics=want_diagnostics
-                )
+                return self._apply_loop_1d(da, want_diagnostics=want_diagnostics)
             da = self._maybe_compute_for_map(da)
             return self._apply_map(da, want_diagnostics=want_diagnostics)
 
@@ -299,14 +290,8 @@ class CosmicRayRemover:
             broad_spike_width=self.broad_spike_width,
         )
         meta = self._meta_1d(mask)
-        out = with_new_values(
-            da, corrected.reshape(da.shape), "Cosmic Ray Correction", meta
-        )
-        diag = (
-            {"cosmic_mask": mask, "corrected_1d": corrected}
-            if want_diagnostics
-            else {}
-        )
+        out = with_new_values(da, corrected.reshape(da.shape), "Cosmic Ray Correction", meta)
+        diag = {"cosmic_mask": mask, "corrected_1d": corrected} if want_diagnostics else {}
         return out, diag
 
     def _apply_loop_1d(
@@ -341,9 +326,7 @@ class CosmicRayRemover:
             "spike_passes": self.spike_passes,
             "spectra_corrected": n_corrected,
         }
-        out = with_new_values(
-            da, out_flat.reshape(orig_shape), "Cosmic Ray Correction", meta
-        )
+        out = with_new_values(da, out_flat.reshape(orig_shape), "Cosmic Ray Correction", meta)
         if want_diagnostics and masks is not None:
             diag: dict[str, Any] = {"cosmic_masks": masks.reshape(orig_shape)}
         else:

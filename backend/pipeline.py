@@ -4,31 +4,30 @@ from __future__ import annotations
 
 import uuid
 import warnings
-from pathlib import Path
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import xarray as xr
-
 from wdfkit import WDFReader
 
-from cosmic_ray import CosmicRayRemover
-from spectra_cleaner import Denoiser
-from spectra_smoother import SpectraSmoother
-from _shared.clean_data import CleanData
-from _shared.normalize import normalize
-from _shared.dataset import SpectralDataset, validate_spectral_dataset
 from _shared._spectral import (
     resolve_spectral_dim,
     transpose_spectral_last,
     with_new_values,
 )
-
+from _shared.clean_data import CleanData
+from _shared.dataset import SpectralDataset, validate_spectral_dataset
+from _shared.normalize import normalize
+from cosmic_ray import CosmicRayRemover
+from spectra_cleaner import Denoiser
+from spectra_smoother import SpectraSmoother
 
 # ---------------------------------------------------------------------------
 # File loading
 # ---------------------------------------------------------------------------
+
 
 def load_wdf(file_bytes: bytes) -> SpectralDataset:
     """Parse a .wdf file from raw bytes and return a SpectralDataset.
@@ -56,9 +55,9 @@ def load_wdf(file_bytes: bytes) -> SpectralDataset:
             # 65184 (0xFEA0) is a Renishaw top-level tag: (origin_x_µm, origin_y_µm)
             origin_xy = raw_exif.get(65184)
             # 41486/41487 (FocalPlaneXResolution/YResolution) are in the ExifIFD sub-IFD
-            exif_ifd  = raw_exif.get_ifd(34665)
-            fov_x_um  = exif_ifd.get(41486)
-            fov_y_um  = exif_ifd.get(41487)
+            exif_ifd = raw_exif.get_ifd(34665)
+            fov_x_um = exif_ifd.get(41486)
+            fov_y_um = exif_ifd.get(41487)
             if origin_xy and fov_x_um and fov_y_um:
                 image_meta = {
                     "origin_x": float(origin_xy[0]),
@@ -73,8 +72,14 @@ def load_wdf(file_bytes: bytes) -> SpectralDataset:
 
     # ── Laser wavelength ────────────────────────────────────────────────
     laser_nm: float | None = None
-    for _attr in ("laser_wavelength_nm", "LaserWavelength", "laser_wavelength",
-                  "ExcitationWavelength", "LaserWaveLength", "excitation_wavelength"):
+    for _attr in (
+        "laser_wavelength_nm",
+        "LaserWavelength",
+        "laser_wavelength",
+        "ExcitationWavelength",
+        "LaserWaveLength",
+        "excitation_wavelength",
+    ):
         _val = da.attrs.get(_attr)
         if _val is not None:
             try:
@@ -104,24 +109,24 @@ def load_wdf(file_bytes: bytes) -> SpectralDataset:
     is_valid, validation_msg = validate_spectral_dataset(da, spectral_units)
 
     return SpectralDataset(
-        da             = da,
-        spectral_dim   = spectral_dim,
-        spectral_units = spectral_units,
-        spectral_unit  = spectral_unit,
-        spec_min       = spec_min,
-        spec_max       = spec_max,
-        laser_nm       = laser_nm,
-        is_map         = da.ndim == 3 and "row" in da.dims and "column" in da.dims,
-        image_arr      = image_arr,
-        image_meta     = image_meta,
-        laser_power    = _float_attr("laser_power"),
-        exposure_time  = _float_attr("exposure_time"),
-        comment        = da.attrs.get("comment") or "",
-        dims           = da.dims,
-        shape          = da.shape,
-        ndim           = da.ndim,
-        is_valid       = is_valid,
-        validation_msg = validation_msg,
+        da=da,
+        spectral_dim=spectral_dim,
+        spectral_units=spectral_units,
+        spectral_unit=spectral_unit,
+        spec_min=spec_min,
+        spec_max=spec_max,
+        laser_nm=laser_nm,
+        is_map=da.ndim == 3 and "row" in da.dims and "column" in da.dims,
+        image_arr=image_arr,
+        image_meta=image_meta,
+        laser_power=_float_attr("laser_power"),
+        exposure_time=_float_attr("exposure_time"),
+        comment=da.attrs.get("comment") or "",
+        dims=da.dims,
+        shape=da.shape,
+        ndim=da.ndim,
+        is_valid=is_valid,
+        validation_msg=validation_msg,
     )
 
 
@@ -141,6 +146,7 @@ def load_wdf(file_bytes: bytes) -> SpectralDataset:
 # trapezoid, or a bare Python float scale constant) — ``_restore_dtype``
 # casts back so those internal upcasts never leak into the stored result.
 # ---------------------------------------------------------------------------
+
 
 def _restore_dtype(out: xr.DataArray, in_dtype: np.dtype) -> xr.DataArray:
     """Cast ``out`` back to ``in_dtype`` if a stage silently upcast it."""
@@ -321,12 +327,8 @@ def run_stage_chain(
     cache keys off this snapshot. Defaults call the matching ``stage_*`` with
     the stage's own subdict.
     """
-    apply_crr = cosmic_ray or (
-        lambda da, rec: stage_cosmic_ray_removal(da, rec["crr"])
-    )
-    apply_denoise = denoise or (
-        lambda da, rec: stage_denoise(da, rec["denoise"])
-    )
+    apply_crr = cosmic_ray or (lambda da, rec: stage_cosmic_ray_removal(da, rec["crr"]))
+    apply_denoise = denoise or (lambda da, rec: stage_denoise(da, rec["denoise"]))
 
     da: xr.DataArray = dataset.da
     stage_records: list[StageRecord] = []

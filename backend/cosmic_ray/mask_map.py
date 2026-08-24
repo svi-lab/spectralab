@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Spatial (2D/3D map) cosmic-ray detection and replacement."""
 
 from __future__ import annotations
@@ -10,8 +9,8 @@ import numpy as np
 from scipy.ndimage import grey_dilation
 from skimage import filters, morphology
 
-from .mask_1d import _zero_saturation_mask, linear_interpolate_masked_channels_1d
 from ._mad import robust_mad_noise_with_floor
+from .mask_1d import _zero_saturation_mask, linear_interpolate_masked_channels_1d
 
 _LEGACY_SENSITIVITY_REFERENCE = 0.01
 
@@ -51,10 +50,7 @@ def _spatial_robust_noise_per_wavelength(
     noises = np.empty(nlam, dtype=float)
     for k in range(nlam):
         sl = residual_to_spatial_median[:, :, k].ravel()
-        amp = (
-            float(np.nanmax(np.abs(preprocessed[:, :, k])))
-            + np.finfo(float).tiny
-        )
+        amp = float(np.nanmax(np.abs(preprocessed[:, :, k]))) + np.finfo(float).tiny
         noises[k] = robust_mad_noise_with_floor(sl, amp)
     return noises
 
@@ -182,10 +178,7 @@ def correct_cosmic_rays_on_map_cube(
     map_min_residual_over_cutoff: float = 1.05,
     map_require_spatial_local_max: bool = True,
     return_diagnostic_masks: bool = False,
-) -> (
-    tuple[np.ndarray, dict[str, Any]]
-    | tuple[np.ndarray, dict[str, Any], dict[str, Any]]
-):
+) -> tuple[np.ndarray, dict[str, Any]] | tuple[np.ndarray, dict[str, Any], dict[str, Any]]:
     """Spatial disk-median on a per-spectrum normalised cube.
 
     Per channel λ, the cutoff is
@@ -202,7 +195,11 @@ def correct_cosmic_rays_on_map_cube(
     has_nan_map = bool(np.any(nan_pix))
     if has_nan_map:
         valid_pix = flat_2d[~nan_pix]
-        fill = np.nanmedian(valid_pix, axis=0) if valid_pix.shape[0] > 0 else np.zeros(flat_in.shape[-1])
+        fill = (
+            np.nanmedian(valid_pix, axis=0)
+            if valid_pix.shape[0] > 0
+            else np.zeros(flat_in.shape[-1])
+        )
         flat_2d_work = flat_2d.copy()
         flat_2d_work[nan_pix] = fill
         values = flat_2d_work.reshape(orig_map_shape)
@@ -238,9 +235,7 @@ def correct_cosmic_rays_on_map_cube(
     corrected_norm = interpolate_cosmic_ray_regions_spectrally(
         preprocessed, spatial_median_reference, dilated
     )
-    corrected_physical_units = np.maximum(
-        corrected_norm * per_spectrum_median + per_spec_min, 0.0
-    )
+    corrected_physical_units = np.maximum(corrected_norm * per_spectrum_median + per_spec_min, 0.0)
     if has_nan_map:
         corrected_physical_units.reshape(-1, orig_map_shape[-1])[nan_pix] = np.nan
     meta: dict[str, Any] = {
@@ -281,10 +276,7 @@ def correct_cosmic_rays_collection(
     max_repair_extent: int | None = None,
     n_components: int = 3,
     return_diagnostics: bool = False,
-) -> (
-    tuple[np.ndarray, dict[str, Any]]
-    | tuple[np.ndarray, dict[str, Any], dict[str, Any]]
-):
+) -> tuple[np.ndarray, dict[str, Any]] | tuple[np.ndarray, dict[str, Any], dict[str, Any]]:
     """Global-median or PCA-reference CR removal for collections.
 
     Works on any shape ``(..., n_channels)``: spatial dims flattened
@@ -307,7 +299,11 @@ def correct_cosmic_rays_collection(
     has_nan_coll = bool(np.any(nan_spec_mask))
     if has_nan_coll:
         valid_spectra = flat[~nan_spec_mask]
-        fill = np.nanmedian(valid_spectra, axis=0) if valid_spectra.shape[0] > 0 else np.zeros(n_channels)
+        fill = (
+            np.nanmedian(valid_spectra, axis=0)
+            if valid_spectra.shape[0] > 0
+            else np.zeros(n_channels)
+        )
         flat = flat.copy()
         flat[nan_spec_mask] = fill
 

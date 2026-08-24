@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Shared plumbing for population factorization methods (NMF, MCR-ALS).
 
 Both factorization backends reshape a ``(..., n_spectral)`` cube into a
@@ -25,8 +24,7 @@ def _flatten_to_row_stack(
     arr = np.asarray(values, dtype=float)
     if arr.ndim < 2:
         raise ValueError(
-            "Factorization needs >= 2D input (last axis = spectral); "
-            f"got ndim={arr.ndim}"
+            f"Factorization needs >= 2D input (last axis = spectral); got ndim={arr.ndim}"
         )
     spatial_shape = arr.shape[:-1]
     n_spectral = arr.shape[-1]
@@ -59,11 +57,7 @@ def _nonnegative_fit_matrix(
 
     if nan_row_mask.any():
         valid_fit = spectra_for_fit[valid_idx]
-        fill = (
-            np.nanmedian(valid_fit, axis=0)
-            if valid_fit.shape[0] > 0
-            else np.zeros(n_spectral)
-        )
+        fill = np.nanmedian(valid_fit, axis=0) if valid_fit.shape[0] > 0 else np.zeros(n_spectral)
         spectra_for_fit = spectra_for_fit.copy()
         spectra_for_fit[nan_row_mask] = fill
 

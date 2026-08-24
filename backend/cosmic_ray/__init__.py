@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Cosmic-ray removal: :class:`CosmicRayRemover` and helpers.
 
 File layout
@@ -13,7 +12,7 @@ Private implementation details (not imported outside this package):
   _mad.py  — scaled-MAD noise estimator used by mask_1d and mask_map
 """
 
-from .mask_1d import remove_cosmic_rays_1d
 from ._remover import CosmicRayRemover
+from .mask_1d import remove_cosmic_rays_1d
 
 __all__ = ["CosmicRayRemover", "remove_cosmic_rays_1d"]

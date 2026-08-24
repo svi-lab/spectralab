@@ -1,0 +1,45 @@
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["backend", "frontend", "tests"]
+extend-exclude = ["data", "agent-skills"]
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "F",  # pyflakes
+    "W",  # pycodestyle warnings
+    "I",  # isort
+    "UP", # pyupgrade
+    "B",  # bugbear
+]
+ignore = [
+    "E501", # line length is the formatter's job
+    "B904", # `raise ... from` — noisy in Streamlit error handlers
+    "B905", # zip(..., strict=True) is a large, behaviour-changing sweep
+]
+
+[tool.ruff.lint.per-file-ignores]
+# sys.path is patched before third-party / first-party imports.
+"app.py" = ["E402", "I"]
+"**/__init__.py" = ["F401"]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "backend",
+    "frontend",
+    "_shared",
+    "cosmic_ray",
+    "spectra_cleaner",
+    "spectra_smoother",
+    "spectra_decomposer",
+    "spectra_mcr",
+    "peak_fitter",
+    "optics",
+    "background",
+    "tests",
+]
+
+[tool.codespell]
+ignore-words-list = "nmf,als,wdf,npz,nd,te,fo,mater"
+skip = ".git,.venv,venv,data,*.npz,*.wdf"

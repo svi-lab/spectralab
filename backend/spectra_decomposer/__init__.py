@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """NMF-based spectral pattern decomposition: :class:`Decomposer`."""
 
 from ._decomposer import Decomposer

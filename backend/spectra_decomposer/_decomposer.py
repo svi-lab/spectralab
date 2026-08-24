@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """High-level NMF pattern decomposition: :class:`Decomposer`."""
 
 from __future__ import annotations
@@ -52,13 +51,9 @@ class Decomposer:
 
     def __post_init__(self) -> None:
         if self.n_components < 1:
-            raise ValueError(
-                f"n_components must be >= 1, got {self.n_components}"
-            )
+            raise ValueError(f"n_components must be >= 1, got {self.n_components}")
 
-    def decompose(
-        self, spectra: xr.DataArray
-    ) -> tuple[xr.DataArray, dict[str, Any]]:
+    def decompose(self, spectra: xr.DataArray) -> tuple[xr.DataArray, dict[str, Any]]:
         """Run NMF decomposition, return ``(reconstructed_da, payload)``.
 
         ``reconstructed_da`` has the same shape/coords as ``spectra``, with
@@ -73,8 +68,7 @@ class Decomposer:
         """
         if not isinstance(spectra, xr.DataArray):
             raise TypeError(
-                "Decomposer.decompose expects an xarray.DataArray; got "
-                f"{type(spectra).__name__}"
+                f"Decomposer.decompose expects an xarray.DataArray; got {type(spectra).__name__}"
             )
 
         sdim = resolve_spectral_dim(spectra, self.spectral_dim)
@@ -116,9 +110,7 @@ class Decomposer:
             da_w.shape,
         )
         if tuple(da_w.dims) != orig_order:
-            reconstructed_da = da_w.copy(data=reconstructed_w_array).transpose(
-                *orig_order
-            )
+            reconstructed_da = da_w.copy(data=reconstructed_w_array).transpose(*orig_order)
             reconstructed = reconstructed_da.values
         else:
             reconstructed = reconstructed_w_array

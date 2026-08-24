@@ -1,10 +1,9 @@
-# -*- coding: utf-8 -*-
 """Per-pixel Gaussian deconvolution across an entire map: :func:`fit_map_gaussian`."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 import numpy as np
 import xarray as xr
@@ -52,9 +51,7 @@ def fit_map_gaussian(
     poison its neighbors.
     """
     if da_map.ndim != 3:
-        raise ValueError(
-            f"fit_map_gaussian needs a 3D map DataArray; got ndim={da_map.ndim}"
-        )
+        raise ValueError(f"fit_map_gaussian needs a 3D map DataArray; got ndim={da_map.ndim}")
 
     sdim = spectral_dim or da_map.dims[-1]
     spatial_dims = [d for d in da_map.dims if d != sdim]
@@ -71,8 +68,7 @@ def fit_map_gaussian(
 
     labels = [b.label or f"Band {i + 1}" for i, b in enumerate(bands)]
     band_results: dict[str, dict[str, np.ndarray]] = {
-        label: {p: np.full((n_row, n_col), np.nan) for p in _PARAM_NAMES}
-        for label in labels
+        label: {p: np.full((n_row, n_col), np.nan) for p in _PARAM_NAMES} for label in labels
     }
     r_squared_map = np.full((n_row, n_col), np.nan)
     reduced_chi_square_map = np.full((n_row, n_col), np.nan)
@@ -94,7 +90,9 @@ def fit_map_gaussian(
             else:
                 try:
                     result = fitter.fit(
-                        x, y, bands,
+                        x,
+                        y,
+                        bands,
                         params_init=prev_params if warm_start else None,
                     )
                 except (ValueError, RuntimeError):
@@ -112,9 +110,7 @@ def fit_map_gaussian(
                         band_results[label]["area"][r, c] = band_result.area
                     n_fitted += 1
                     prev_params = (
-                        result.raw_lmfit_result.params
-                        if warm_start and result.success
-                        else None
+                        result.raw_lmfit_result.params if warm_start and result.success else None
                     )
 
             if progress_callback is not None:

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Gaussian deconvolution page: manual multi-peak fitting with result statistics."""
 
 from __future__ import annotations
@@ -23,14 +22,27 @@ from backend.peak_fitter import (
     get_preset_bands,
     list_preset_materials,
 )
-from ..export_utils import batch_fit_to_npz, fit_curves_to_npz
 
-from ..charts import convert_x, convert_x_to_native, make_deconv_fit_echarts, make_deconv_preview_echarts
+from ..charts import (
+    convert_x,
+    convert_x_to_native,
+    make_deconv_fit_echarts,
+    make_deconv_preview_echarts,
+)
 from ..controls import render_axis_controls, render_map_display_controls
+from ..export_utils import batch_fit_to_npz, fit_curves_to_npz
 from ..map_chart import make_scalar_map_fig
 from ..pipeline_cache import default_pipeline_params, final_da, get_finals
 
-_BAND_COLUMNS = ["label", "center_guess", "center_min", "center_max", "sigma_guess", "sigma_min", "sigma_max"]
+_BAND_COLUMNS = [
+    "label",
+    "center_guess",
+    "center_min",
+    "center_max",
+    "sigma_guess",
+    "sigma_min",
+    "sigma_max",
+]
 _NUMERIC_BAND_COLUMNS = _BAND_COLUMNS[1:]
 
 # The band editor is remounted under a fresh key whenever the display unit changes or
@@ -43,10 +55,10 @@ _EDITOR_KEY_PREFIX = "deconv_bands_editor_"
 # whole numbers" problem: st.column_config.NumberColumn falls back to integer stepping
 # unless the column resolves to a float dtype *and* a sub-unit step is given.
 _UNIT_SPEC: dict[str, dict[str, Any]] = {
-    "energy":      {"short": "eV",   "step": 0.0001, "format": "%.4f"},
-    "wavelength":  {"short": "nm",   "step": 0.01,   "format": "%.2f"},
-    "wavenumber":  {"short": "cm⁻¹", "step": 0.1,    "format": "%.1f"},
-    "raman_shift": {"short": "cm⁻¹", "step": 0.1,    "format": "%.1f"},
+    "energy": {"short": "eV", "step": 0.0001, "format": "%.4f"},
+    "wavelength": {"short": "nm", "step": 0.01, "format": "%.2f"},
+    "wavenumber": {"short": "cm⁻¹", "step": 0.1, "format": "%.1f"},
+    "raman_shift": {"short": "cm⁻¹", "step": 0.1, "format": "%.1f"},
 }
 
 # Every preset band gets a +/- 20 nm center bound by default, on top of its literature
@@ -68,11 +80,17 @@ function (params) {
 
 def _default_bands_table(x: np.ndarray) -> list[dict]:
     center = float(np.median(x)) if len(x) else 0.0
-    return [{
-        "label": "Band 1", "center_guess": round(center, 2),
-        "center_min": None, "center_max": None,
-        "sigma_guess": None, "sigma_min": None, "sigma_max": None,
-    }]
+    return [
+        {
+            "label": "Band 1",
+            "center_guess": round(center, 2),
+            "center_min": None,
+            "center_max": None,
+            "sigma_guess": None,
+            "sigma_min": None,
+            "sigma_max": None,
+        }
+    ]
 
 
 def _none_or_float(v: Any) -> float | None:
@@ -99,6 +117,7 @@ def _none_or_str(v: Any) -> str | None:
 # ---------------------------------------------------------------------------
 # Band rows: canonical eV storage <-> the unit the Display selector shows
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class _BandUnits:
@@ -134,16 +153,28 @@ class _BandUnits:
         self.inverts = self.from_ev(2.0) < self.from_ev(1.0)
 
     def from_ev(self, ev: float) -> float:
-        return float(convert_x(
-            np.asarray([ev], dtype=float), self.spectral_dim, self.x_unit, self.laser_nm,
-            src_unit=self.src_unit, native_type="ElectronVolt",
-        )[0])
+        return float(
+            convert_x(
+                np.asarray([ev], dtype=float),
+                self.spectral_dim,
+                self.x_unit,
+                self.laser_nm,
+                src_unit=self.src_unit,
+                native_type="ElectronVolt",
+            )[0]
+        )
 
     def to_ev(self, disp: float) -> float:
-        return float(convert_x_to_native(
-            disp, self.spectral_dim, self.x_unit, self.laser_nm,
-            src_unit=self.src_unit, native_type="ElectronVolt",
-        ))
+        return float(
+            convert_x_to_native(
+                disp,
+                self.spectral_dim,
+                self.x_unit,
+                self.laser_nm,
+                src_unit=self.src_unit,
+                native_type="ElectronVolt",
+            )
+        )
 
     def _scale_at(self, center_ev: float) -> float | None:
         """|d(display)/d(eV)| at ``center_ev``, by central difference.
@@ -251,6 +282,7 @@ def _bands_digest(rows: list[dict]) -> str:
 # Band table state (canonical eV; never display units)
 # ---------------------------------------------------------------------------
 
+
 def _set_bands(rows: list[dict]) -> None:
     """Replace the band table and force the editor to remount on the next run.
 
@@ -309,11 +341,17 @@ def _preset_rows_to_table_rows(presets: tuple[BandPreset, ...]) -> list[dict]:
         # nm -> eV is inversely proportional, so the longer-wavelength edge maps to
         # the lower-energy bound. 1239.84 is the same hc[eV*nm] constant charts.convert_x uses.
         lo, hi = 1239.84 / nm_hi, 1239.84 / nm_lo
-        rows.append({
-            "label": p.label, "center_guess": center,
-            "center_min": round(lo, 4), "center_max": round(hi, 4),
-            "sigma_guess": None, "sigma_min": None, "sigma_max": None,
-        })
+        rows.append(
+            {
+                "label": p.label,
+                "center_guess": center,
+                "center_min": round(lo, 4),
+                "center_max": round(hi, 4),
+                "sigma_guess": None,
+                "sigma_min": None,
+                "sigma_max": None,
+            }
+        )
     return rows
 
 
@@ -323,15 +361,17 @@ def _bands_from_table(rows: list[dict]) -> list[BandSpec]:
         center = _none_or_float(row.get("center_guess"))
         if center is None:
             continue
-        bands.append(BandSpec(
-            center_guess=center,
-            center_min=_none_or_float(row.get("center_min")),
-            center_max=_none_or_float(row.get("center_max")),
-            sigma_guess=_none_or_float(row.get("sigma_guess")),
-            sigma_min=_none_or_float(row.get("sigma_min")),
-            sigma_max=_none_or_float(row.get("sigma_max")),
-            label=_none_or_str(row.get("label")) or f"Band {i + 1}",
-        ))
+        bands.append(
+            BandSpec(
+                center_guess=center,
+                center_min=_none_or_float(row.get("center_min")),
+                center_max=_none_or_float(row.get("center_max")),
+                sigma_guess=_none_or_float(row.get("sigma_guess")),
+                sigma_min=_none_or_float(row.get("sigma_min")),
+                sigma_max=_none_or_float(row.get("sigma_max")),
+                label=_none_or_str(row.get("label")) or f"Band {i + 1}",
+            )
+        )
     return bands
 
 
@@ -366,20 +406,31 @@ def _render_band_editor(units: _BandUnits, file_name: str) -> tuple[list[dict], 
 
         head = st.columns([3, 2, 1, 2, 5], vertical_alignment="bottom")
         preset_choice = head[0].selectbox(
-            "Load preset", ["— none —", *list_preset_materials()], key="deconv_preset_select",
+            "Load preset",
+            ["— none —", *list_preset_materials()],
+            key="deconv_preset_select",
         )
         presets = get_preset_bands(preset_choice) if preset_choice != "— none —" else ()
         head[1].button(
             f"Add {len(presets)} bands" if presets else "Add preset bands",
-            key="deconv_add_preset", disabled=not presets, width="stretch",
-            on_click=_append_bands, args=(_preset_rows_to_table_rows(presets),),
+            key="deconv_add_preset",
+            disabled=not presets,
+            width="stretch",
+            on_click=_append_bands,
+            args=(_preset_rows_to_table_rows(presets),),
         )
         head[2].button(
-            "Clear", key="deconv_clear_bands_button", width="stretch",
-            on_click=_set_bands, args=([],),
+            "Clear",
+            key="deconv_clear_bands_button",
+            width="stretch",
+            on_click=_set_bands,
+            args=([],),
         )
         fit_clicked = head[3].button(
-            "Fit", key="deconv_fit_button", type="primary", width="stretch",
+            "Fit",
+            key="deconv_fit_button",
+            type="primary",
+            width="stretch",
         )
 
         if presets:
@@ -405,7 +456,8 @@ def _render_band_editor(units: _BandUnits, file_name: str) -> tuple[list[dict], 
 
         editor_key = _sync_editor_source(units)
         for stale in [
-            k for k in st.session_state
+            k
+            for k in st.session_state
             if isinstance(k, str) and k.startswith(_EDITOR_KEY_PREFIX) and k != editor_key
         ]:
             st.session_state.pop(stale, None)
@@ -414,7 +466,10 @@ def _render_band_editor(units: _BandUnits, file_name: str) -> tuple[list[dict], 
 
         def _num(label: str, help_text: str | None = None) -> Any:
             return st.column_config.NumberColumn(
-                label, step=units.step, format=units.number_format, help=help_text,
+                label,
+                step=units.step,
+                format=units.number_format,
+                help=help_text,
             )
 
         edited = st.data_editor(
@@ -424,7 +479,9 @@ def _render_band_editor(units: _BandUnits, file_name: str) -> tuple[list[dict], 
             width="stretch",
             column_config={
                 "label": st.column_config.TextColumn("Label", width="medium"),
-                "center_guess": _num(f"Center ({u})", "Starting position. Rows left blank here are ignored."),
+                "center_guess": _num(
+                    f"Center ({u})", "Starting position. Rows left blank here are ignored."
+                ),
                 "center_min": _num(f"Center min ({u})", "Blank = unconstrained."),
                 "center_max": _num(f"Center max ({u})", "Blank = unconstrained."),
                 "sigma_guess": _num(f"σ guess ({u})", "Blank = estimated from the data."),
@@ -449,7 +506,9 @@ def _render_band_editor(units: _BandUnits, file_name: str) -> tuple[list[dict], 
             and st.session_state.get("sl_deconv_result_file") == file_name
             and st.session_state.get("sl_deconv_result_digest") != _bands_digest(rows)
         ):
-            st.caption("⚠️ Band table changed since the last fit — press **Fit** to update the chart.")
+            st.caption(
+                "⚠️ Band table changed since the last fit — press **Fit** to update the chart."
+            )
 
     return rows, fit_clicked
 
@@ -488,15 +547,37 @@ def _fit_stats_rows(fit_result: FitResult) -> list[dict]:
 def _fit_stats_csv(fit_result: FitResult) -> bytes:
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow([
-        "label", "center", "center_stderr", "amplitude", "amplitude_stderr",
-        "sigma", "sigma_stderr", "fwhm", "fwhm_stderr", "area", "area_pct",
-    ])
+    writer.writerow(
+        [
+            "label",
+            "center",
+            "center_stderr",
+            "amplitude",
+            "amplitude_stderr",
+            "sigma",
+            "sigma_stderr",
+            "fwhm",
+            "fwhm_stderr",
+            "area",
+            "area_pct",
+        ]
+    )
     for b in fit_result.bands:
-        writer.writerow([
-            b.label, b.center, b.center_stderr, b.amplitude, b.amplitude_stderr,
-            b.sigma, b.sigma_stderr, b.fwhm, b.fwhm_stderr, b.area, b.area_pct,
-        ])
+        writer.writerow(
+            [
+                b.label,
+                b.center,
+                b.center_stderr,
+                b.amplitude,
+                b.amplitude_stderr,
+                b.sigma,
+                b.sigma_stderr,
+                b.fwhm,
+                b.fwhm_stderr,
+                b.area,
+                b.area_pct,
+            ]
+        )
     writer.writerow([])
     writer.writerow(["r_squared", fit_result.r_squared])
     writer.writerow(["reduced_chi_square", fit_result.reduced_chi_square])
@@ -508,22 +589,41 @@ def _fit_stats_csv(fit_result: FitResult) -> bytes:
 def _batch_result_csv(batch_result, labels: list[str]) -> bytes:
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow([
-        "row", "column", "band", "center", "amplitude", "sigma", "fwhm", "area",
-        "r_squared", "reduced_chi_square", "success",
-    ])
+    writer.writerow(
+        [
+            "row",
+            "column",
+            "band",
+            "center",
+            "amplitude",
+            "sigma",
+            "fwhm",
+            "area",
+            "r_squared",
+            "reduced_chi_square",
+            "success",
+        ]
+    )
     n_row, n_col = batch_result.r_squared_map.shape
     for r in range(n_row):
         for c in range(n_col):
             for label in labels:
                 band = batch_result.band_results[label]
-                writer.writerow([
-                    r, c, label,
-                    band["center"][r, c], band["amplitude"][r, c], band["sigma"][r, c],
-                    band["fwhm"][r, c], band["area"][r, c],
-                    batch_result.r_squared_map[r, c], batch_result.reduced_chi_square_map[r, c],
-                    bool(batch_result.success_map[r, c]),
-                ])
+                writer.writerow(
+                    [
+                        r,
+                        c,
+                        label,
+                        band["center"][r, c],
+                        band["amplitude"][r, c],
+                        band["sigma"][r, c],
+                        band["fwhm"][r, c],
+                        band["area"][r, c],
+                        batch_result.r_squared_map[r, c],
+                        batch_result.reduced_chi_square_map[r, c],
+                        bool(batch_result.success_map[r, c]),
+                    ]
+                )
     return buf.getvalue().encode("utf-8")
 
 
@@ -541,7 +641,9 @@ def render_deconvolution_page() -> None:
 
     if len(loaded) > 1:
         file_name = st.columns([1, 2])[0].selectbox(
-            "Select file", list(loaded.keys()), key="deconv_file_select",
+            "Select file",
+            list(loaded.keys()),
+            key="deconv_file_select",
         )
     else:
         file_name = next(iter(loaded))
@@ -553,7 +655,9 @@ def render_deconvolution_page() -> None:
 
     da_final = final_da(all_datasets.get(file_name))
     if da_final is None:
-        st.warning("Processing result not available for this file. Visit the Preprocessing page first.")
+        st.warning(
+            "Processing result not available for this file. Visit the Preprocessing page first."
+        )
         return
 
     spectral_dim = da_final.dims[-1]
@@ -570,7 +674,9 @@ def render_deconvolution_page() -> None:
         with st.container(border=True):
             st.markdown('<p class="section-header">Display</p>', unsafe_allow_html=True)
             x_unit, laser_nm = render_axis_controls(
-                "deconv", ds.laser_nm, native_type=ds.spectral_units,
+                "deconv",
+                ds.laser_nm,
+                native_type=ds.spectral_units,
             )
 
         with st.container(border=True):
@@ -599,9 +705,12 @@ def render_deconvolution_page() -> None:
                 c1, c2 = st.columns(2)
                 row_idx = c1.number_input("Row index", 0, n_row - 1, 0, key="deconv_row_idx")
                 col_idx = c2.number_input("Column index", 0, n_col - 1, 0, key="deconv_col_idx")
-                target_da = da_final.isel({
-                    spatial_dims[0]: int(row_idx), spatial_dims[1]: int(col_idx),
-                })
+                target_da = da_final.isel(
+                    {
+                        spatial_dims[0]: int(row_idx),
+                        spatial_dims[1]: int(col_idx),
+                    }
+                )
                 target_x = target_da.coords[spectral_dim].values
                 target_y = target_da.values
                 if bool(np.all(np.isnan(target_y))):
@@ -609,7 +718,8 @@ def render_deconvolution_page() -> None:
             elif target_mode == "NMF component":
                 n_comp = nmf_result["components"].shape[0]
                 comp_idx = st.selectbox(
-                    "Component", range(n_comp),
+                    "Component",
+                    range(n_comp),
                     format_func=lambda i: f"Component {i + 1}",
                     key="deconv_nmf_comp_select",
                 )
@@ -618,7 +728,8 @@ def render_deconvolution_page() -> None:
             elif target_mode == "MCR component":
                 n_comp = mcr_result["components"].shape[0]
                 comp_idx = st.selectbox(
-                    "Component", range(n_comp),
+                    "Component",
+                    range(n_comp),
                     format_func=lambda i: f"Component {i + 1}",
                     key="deconv_mcr_comp_select",
                 )
@@ -634,8 +745,12 @@ def render_deconvolution_page() -> None:
             # selector above — those still only affect what's drawn on the chart and
             # which unit the band table is typed in.
             target_x = convert_x(
-                target_x, spectral_dim, "energy", laser_nm,
-                src_unit=ds.spectral_unit, native_type=ds.spectral_units,
+                target_x,
+                spectral_dim,
+                "energy",
+                laser_nm,
+                src_unit=ds.spectral_unit,
+                native_type=ds.spectral_units,
             )
 
         with st.container(border=True):
@@ -663,7 +778,9 @@ def render_deconvolution_page() -> None:
             _run_fit(target_x, target_y, band_rows, file_name)
 
         fit_result = st.session_state.get("sl_deconv_result")
-        has_fit = fit_result is not None and st.session_state.get("sl_deconv_result_file") == file_name
+        has_fit = (
+            fit_result is not None and st.session_state.get("sl_deconv_result_file") == file_name
+        )
 
         fit_title = st.text_input("Chart title", value="Peak Deconvolution", key="deconv_fit_title")
         st.caption(
@@ -677,21 +794,28 @@ def render_deconvolution_page() -> None:
         # x_unit, and that input is now always eV, not the file's stored unit.
         if has_fit:
             chart_options = make_deconv_fit_echarts(
-                fit_result, spectral_dim,
+                fit_result,
+                spectral_dim,
                 title=fit_title,
-                x_unit=x_unit, laser_nm=laser_nm,
-                src_unit=ds.spectral_unit, native_type="ElectronVolt",
+                x_unit=x_unit,
+                laser_nm=laser_nm,
+                src_unit=ds.spectral_unit,
+                native_type="ElectronVolt",
             )
         else:
             band_centers_ev = [
-                c for row in band_rows
-                if (c := _none_or_float(row.get("center_guess"))) is not None
+                c for row in band_rows if (c := _none_or_float(row.get("center_guess"))) is not None
             ]
             chart_options = make_deconv_preview_echarts(
-                target_x, target_y, spectral_dim, band_centers_ev,
+                target_x,
+                target_y,
+                spectral_dim,
+                band_centers_ev,
                 title=fit_title,
-                x_unit=x_unit, laser_nm=laser_nm,
-                src_unit=ds.spectral_unit, native_type="ElectronVolt",
+                x_unit=x_unit,
+                laser_nm=laser_nm,
+                src_unit=ds.spectral_unit,
+                native_type="ElectronVolt",
             )
         chart_value = st_echarts(
             chart_options,
@@ -709,11 +833,19 @@ def render_deconvolution_page() -> None:
             # conversion target) since band rows are stored in eV whatever the editor
             # is showing.
             x_ev = units.to_ev(click_value["x"])
-            _append_bands([{
-                "label": None, "center_guess": round(x_ev, 6),
-                "center_min": None, "center_max": None,
-                "sigma_guess": None, "sigma_min": None, "sigma_max": None,
-            }])
+            _append_bands(
+                [
+                    {
+                        "label": None,
+                        "center_guess": round(x_ev, 6),
+                        "center_min": None,
+                        "center_max": None,
+                        "sigma_guess": None,
+                        "sigma_min": None,
+                        "sigma_max": None,
+                    }
+                ]
+            )
             # Only refit when a fit is already on screen — on a first pass the click is
             # just staging a position, and a surprise fit there hides the preview lines
             # the user is placing.
@@ -757,17 +889,25 @@ def render_deconvolution_page() -> None:
                 # Fit against an eV-coordinate view of da_final (labels only, via
                 # assign_coords — no data copy, intensity untouched), matching the
                 # single-spectrum fit path above which always runs in energy space.
-                da_final_ev = da_final.assign_coords({
-                    spectral_dim: convert_x(
-                        da_final.coords[spectral_dim].values, spectral_dim, "energy", laser_nm,
-                        src_unit=ds.spectral_unit, native_type=ds.spectral_units,
-                    )
-                })
+                da_final_ev = da_final.assign_coords(
+                    {
+                        spectral_dim: convert_x(
+                            da_final.coords[spectral_dim].values,
+                            spectral_dim,
+                            "energy",
+                            laser_nm,
+                            src_unit=ds.spectral_unit,
+                            native_type=ds.spectral_units,
+                        )
+                    }
+                )
                 with st.spinner("Fitting every pixel…"):
                     batch_result = fit_map_gaussian(da_final_ev, bands, progress_callback=_cb)
                 progress_bar.empty()
                 st.session_state["sl_deconv_batch_result"] = batch_result
-                st.session_state["sl_deconv_batch_labels"] = [b.label or f"Band {i+1}" for i, b in enumerate(bands)]
+                st.session_state["sl_deconv_batch_labels"] = [
+                    b.label or f"Band {i + 1}" for i, b in enumerate(bands)
+                ]
                 st.session_state["sl_deconv_batch_file"] = file_name
 
         batch_result = st.session_state.get("sl_deconv_batch_result")
@@ -778,11 +918,14 @@ def render_deconvolution_page() -> None:
                 f"skipped {batch_result.n_skipped_nan} NaN pixels · "
                 f"{batch_result.n_failed} failed fits"
             )
-            labels = st.session_state.get("sl_deconv_batch_labels", list(batch_result.band_results.keys()))
+            labels = st.session_state.get(
+                "sl_deconv_batch_labels", list(batch_result.band_results.keys())
+            )
             c1, c2, c3 = st.columns([1, 1, 2])
             band_label = c1.selectbox("Band", labels, key="deconv_batch_band_select")
             param_name = c2.selectbox(
-                "Parameter", ["center", "amplitude", "sigma", "fwhm", "area"],
+                "Parameter",
+                ["center", "amplitude", "sigma", "fwhm", "area"],
                 key="deconv_batch_param_select",
             )
             with c3:
@@ -791,10 +934,15 @@ def render_deconvolution_page() -> None:
             row_coords = da_final.coords[spatial_dims[0]].values
             col_coords = da_final.coords[spatial_dims[1]].values
             fig = make_scalar_map_fig(
-                z, row_coords, col_coords, ds.image_arr, ds.image_meta,
+                z,
+                row_coords,
+                col_coords,
+                ds.image_arr,
+                ds.image_meta,
                 cbar_label=f"{band_label} {param_name}",
                 title=f"{file_name} — {band_label} {param_name}",
-                colorscale=colorscale, map_opacity=map_opacity,
+                colorscale=colorscale,
+                map_opacity=map_opacity,
             )
             st.plotly_chart(fig, width="stretch", height=550)
             st.download_button(
@@ -807,7 +955,8 @@ def render_deconvolution_page() -> None:
             st.download_button(
                 "Export parameter maps (.npz)",
                 batch_fit_to_npz(
-                    batch_result, labels,
+                    batch_result,
+                    labels,
                     da_final.coords[spatial_dims[0]].values,
                     da_final.coords[spatial_dims[1]].values,
                 ),

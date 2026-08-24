@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Scan footprint geometry extraction for all WDF scan types."""
 
 from __future__ import annotations
@@ -61,6 +60,7 @@ def _fit_circle_or_hull(xs: np.ndarray, ys: np.ndarray) -> ScanGeometry:
     # Convex hull with scipy; fall back to bounding rect
     try:
         from scipy.spatial import ConvexHull
+
         pts = np.column_stack([xs, ys])
         hull = ConvexHull(pts)
         vx = xs[hull.vertices]
@@ -79,7 +79,7 @@ def _fit_circle_or_hull(xs: np.ndarray, ys: np.ndarray) -> ScanGeometry:
         )
 
 
-def get_scan_geometry(dataset: "SpectralDataset") -> ScanGeometry | None:
+def get_scan_geometry(dataset: SpectralDataset) -> ScanGeometry | None:
     """Extract scan footprint geometry from a SpectralDataset.
 
     Returns None if no spatial coordinate information is available.

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Orchestrator: nm-at-boundary -> cm-internal -> human-readable summary dict.
 
 The underlying physics lives in _core.py (all-cm convention). This module
@@ -62,25 +61,25 @@ def film_stack_summary(
     predicted background suppression scale (see suppression_scale_physics).
     This is the single source of truth consumed by the Preprocessing page.
     """
-    lam_cm   = laser_nm * 1e-7
+    lam_cm = laser_nm * 1e-7
     d_film_cm = film_d_nm * 1e-7
-    d_sub_cm  = sub_d_mm * 0.1
+    d_sub_cm = sub_d_mm * 0.1
 
     alpha_film = alpha_from_k(film_k, lam_cm)
-    alpha_sub  = alpha_from_k(sub_k,  lam_cm)
+    alpha_sub = alpha_from_k(sub_k, lam_cm)
 
     R_air_film = fresnel_R_air(film_n, film_k)
     R_film_sub = fresnel_R_interface(film_n, film_k, sub_n, sub_k)
-    R_air_sub  = fresnel_R_air(sub_n, sub_k)
+    R_air_sub = fresnel_R_air(sub_n, sub_k)
 
     delta_film_cm = penetration_depth(alpha_film)
-    d99s_cm       = d99_simple(alpha_film)
-    d99c_cm       = d99_corrected(alpha_film, R_air_film)
+    d99s_cm = d99_simple(alpha_film)
+    d99c_cm = d99_corrected(alpha_film, R_air_film)
 
     # Beer-Lambert fractions
     bl_A_film = film_absorption_fraction(1.0, R_air_film, alpha_film, d_film_cm, R_film_sub)
-    bl_T_sub  = substrate_transmission_fraction(1.0, R_air_film, alpha_film, d_film_cm, R_film_sub)
-    bl_R      = R_air_film  # Beer-Lambert uses single-interface Fresnel only
+    bl_T_sub = substrate_transmission_fraction(1.0, R_air_film, alpha_film, d_film_cm, R_film_sub)
+    bl_R = R_air_film  # Beer-Lambert uses single-interface Fresnel only
 
     # TMM fractions
     tmm_R, tmm_A_film, tmm_T_sub = tmm_energy_fractions(
@@ -98,23 +97,23 @@ def film_stack_summary(
         return v_cm * 1e7 if np.isfinite(v_cm) else np.inf
 
     return {
-        "alpha_film_cm":    alpha_film,
-        "delta_film_nm":    _to_nm(delta_film_cm),
-        "d99_simple_nm":    _to_nm(d99s_cm),
+        "alpha_film_cm": alpha_film,
+        "delta_film_nm": _to_nm(delta_film_cm),
+        "d99_simple_nm": _to_nm(d99s_cm),
         "d99_corrected_nm": _to_nm(d99c_cm),
-        "R_air_film":  R_air_film,
-        "R_film_sub":  R_film_sub,
-        "R_air_sub":   R_air_sub,
-        "bl_R":        bl_R,
-        "bl_A_film":   bl_A_film,
-        "bl_T_sub":    bl_T_sub,
-        "tmm_R":       tmm_R,
-        "tmm_A_film":  tmm_A_film,
-        "tmm_T_sub":   tmm_T_sub,
-        "alpha_sub_cm":  alpha_sub,
-        "delta_sub_nm":  _to_nm(delta_sub_cm),
+        "R_air_film": R_air_film,
+        "R_film_sub": R_film_sub,
+        "R_air_sub": R_air_sub,
+        "bl_R": bl_R,
+        "bl_A_film": bl_A_film,
+        "bl_T_sub": bl_T_sub,
+        "tmm_R": tmm_R,
+        "tmm_A_film": tmm_A_film,
+        "tmm_T_sub": tmm_T_sub,
+        "alpha_sub_cm": alpha_sub,
+        "delta_sub_nm": _to_nm(delta_sub_cm),
         "sub_exit_frac": sub_exit,
-        "c_physics":     c_physics,
+        "c_physics": c_physics,
     }
 
 
@@ -134,7 +133,7 @@ def bare_substrate_summary(
       entry_frac   — 1 − R_air_sub, the fraction of the laser entering the substrate
       alpha_sub_cm, delta_sub_nm
     """
-    lam_cm  = laser_nm * 1e-7
+    lam_cm = laser_nm * 1e-7
     d_sub_cm = sub_d_mm * 0.1  # noqa: F841 — kept for future exit-fraction use
 
     alpha_sub = alpha_from_k(sub_k, lam_cm)
@@ -142,9 +141,9 @@ def bare_substrate_summary(
     delta_sub_cm = penetration_depth(alpha_sub)
 
     return {
-        "sample_type":  "substrate",
-        "R_air_sub":    R_air_sub,
-        "entry_frac":   1.0 - R_air_sub,
+        "sample_type": "substrate",
+        "R_air_sub": R_air_sub,
+        "entry_frac": 1.0 - R_air_sub,
         "alpha_sub_cm": alpha_sub,
         "delta_sub_nm": delta_sub_cm * 1e7 if np.isfinite(delta_sub_cm) else np.inf,
     }
@@ -177,12 +176,10 @@ def suppression_scale_physics(
     If c_fitted ≈ c_physics: the optical model is self-consistent.
     If they disagree by > 2x: check film thickness, k, or focus alignment.
     """
-    lam_cm    = laser_nm * 1e-7
+    lam_cm = laser_nm * 1e-7
     d_film_cm = film_d_nm * 1e-7
 
-    _, _, tmm_T_sub = tmm_energy_fractions(
-        1.0, lam_cm, film_n, film_k, d_film_cm, sub_n, sub_k
-    )
+    _, _, tmm_T_sub = tmm_energy_fractions(1.0, lam_cm, film_n, film_k, d_film_cm, sub_n, sub_k)
     R_air_sub = fresnel_R_air(sub_n, sub_k)
 
     return tmm_T_sub / (1.0 - R_air_sub)

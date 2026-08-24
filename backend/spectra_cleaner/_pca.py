@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """PCA-based spectral denoising for stacks of spectra and 3D map cubes.
 
 PCA decomposes a *population* of spectra into orthogonal components and
@@ -33,10 +32,7 @@ def denoise_spectra_pca(
     restore_min: bool = False,
     pca_kwargs: dict[str, Any] | None = None,
     return_decomposition: bool = False,
-) -> (
-    tuple[np.ndarray, dict[str, Any]]
-    | tuple[np.ndarray, dict[str, Any], dict[str, Any]]
-):
+) -> tuple[np.ndarray, dict[str, Any]] | tuple[np.ndarray, dict[str, Any], dict[str, Any]]:
     """Denoise a stack / cube of spectra by PCA reconstruction.
 
     The input is reshaped to ``(n_spectra, n_spectral)`` for the fit, then
@@ -161,9 +157,7 @@ def denoise_spectra_pca(
         "components": np.asarray(pca.components_, dtype=float).copy(),
         "coeffs": coeffs_spatial.copy(),
         "mean": np.asarray(pca.mean_, dtype=float).copy(),
-        "explained_variance": np.asarray(
-            pca.explained_variance_, dtype=float
-        ).copy(),
+        "explained_variance": np.asarray(pca.explained_variance_, dtype=float).copy(),
         "explained_variance_ratio": explained.copy(),
         "noise_variance": float(getattr(pca, "noise_variance_", 0.0)),
         "per_spectrum_min": per_spec_min.reshape(spatial_shape + (1,)).copy(),

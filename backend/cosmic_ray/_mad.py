@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Robust noise scale (MAD) helpers for cosmic-ray detection."""
 
 from __future__ import annotations

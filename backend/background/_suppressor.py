@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """BackgroundSuppressor: subtract a scaled substrate reference from each spectrum.
 
 Teaching note — what this class does and why:
@@ -65,12 +64,17 @@ class BackgroundSuppressor:
           scale_mode  — always "fixed"
         """
         if not isinstance(spectra, xr.DataArray):
-            raise TypeError(f"BackgroundSuppressor expects xr.DataArray; got {type(spectra).__name__}")
+            raise TypeError(
+                f"BackgroundSuppressor expects xr.DataArray; got {type(spectra).__name__}"
+            )
 
         sdim = resolve_spectral_dim(spectra, self.spectral_dim)
         da_w, orig_order = transpose_spectral_last(spectra, sdim)
-        da_w = ensure_in_memory(da_w, caller="BackgroundSuppressor",
-                                reason="background subtraction needs the full array in memory.")
+        da_w = ensure_in_memory(
+            da_w,
+            caller="BackgroundSuppressor",
+            reason="background subtraction needs the full array in memory.",
+        )
 
         # ── Flatten to row stack ──────────────────────────────────────────
         spatial_shape = da_w.shape[:-1]
@@ -114,18 +118,19 @@ class BackgroundSuppressor:
         # Rebuild c in spatial layout (NaN for dead rows)
         c_spatial = np.full(row_stack.shape[0], np.nan)
         c_spatial[valid_idx] = c_before
-        c_spatial_reshaped = c_spatial.reshape(spatial_shape) if len(spatial_shape) > 1 else c_spatial
+        c_spatial_reshaped = (
+            c_spatial.reshape(spatial_shape) if len(spatial_shape) > 1 else c_spatial
+        )
 
         meta: dict[str, Any] = {
-            "c_median":    float(np.nanmedian(c_before)) if len(c_before) > 0 else float("nan"),
-            "c_values":    c_spatial_reshaped,
-            "n_nan_rows":  int(nan_row_mask.sum()),
-            "scale_mode":  "fixed",
+            "c_median": float(np.nanmedian(c_before)) if len(c_before) > 0 else float("nan"),
+            "c_values": c_spatial_reshaped,
+            "n_nan_rows": int(nan_row_mask.sum()),
+            "scale_mode": "fixed",
         }
 
         # Only put serialisable scalars in DataArray attrs
-        attrs_meta = {k: v for k, v in meta.items()
-                      if not isinstance(v, np.ndarray)}
+        attrs_meta = {k: v for k, v in meta.items() if not isinstance(v, np.ndarray)}
 
         out_da = with_new_values(spectra, corrected, _TREATMENT_KEY, attrs_meta)
         return out_da, meta

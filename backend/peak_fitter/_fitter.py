@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Gaussian multi-peak deconvolution for a single spectrum: :class:`PeakFitter`.
 
 Band centers are user-specified; amplitude and width are inferred from the
@@ -97,9 +96,7 @@ def _estimate_sigma_guess(
     return max(span / (4 * max(n_bands, 1)), np.finfo(float).eps)
 
 
-def _estimate_amplitude_guess(
-    x: np.ndarray, y: np.ndarray, center: float, sigma: float
-) -> float:
+def _estimate_amplitude_guess(x: np.ndarray, y: np.ndarray, center: float, sigma: float) -> float:
     """Invert the Gaussian peak-height formula using the data value nearest
     ``center``, so the initial amplitude (area) guess is on the right order
     of magnitude for this spectrum's actual intensity scale — lmfit's own
@@ -116,9 +113,7 @@ def _build_composite_model(
 ) -> tuple[Any, Parameters, list[str]]:
     bad_shapes = [b.shape for b in bands if b.shape != "gaussian"]
     if bad_shapes:
-        raise NotImplementedError(
-            f"Only shape='gaussian' is implemented; got {bad_shapes}"
-        )
+        raise NotImplementedError(f"Only shape='gaussian' is implemented; got {bad_shapes}")
 
     model = None
     params = Parameters()
@@ -141,9 +136,7 @@ def _build_composite_model(
         )
 
         p = gm.make_params()
-        p[f"{prefix}center"].set(
-            value=band.center_guess, min=band.center_min, max=band.center_max
-        )
+        p[f"{prefix}center"].set(value=band.center_guess, min=band.center_min, max=band.center_max)
         p[f"{prefix}sigma"].set(
             value=sigma_guess,
             min=band.sigma_min if band.sigma_min is not None else np.finfo(float).eps,

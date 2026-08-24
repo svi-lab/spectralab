@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """1D spectrum cosmic-ray (positive spike) detection and repair."""
 
 from __future__ import annotations
@@ -25,6 +24,7 @@ _MIN_RELATIVE_RESIDUAL: float = 0.15
 # SNIP background estimator
 # ---------------------------------------------------------------------------
 
+
 def snip_background_1d(y: np.ndarray, n_iterations: int) -> np.ndarray:
     """Background via SNIP (Sensitive Nonlinear Iterative Peak-clipping).
 
@@ -37,7 +37,7 @@ def snip_background_1d(y: np.ndarray, n_iterations: int) -> np.ndarray:
     v = np.log(np.log(np.sqrt(np.maximum(y, 0.0) + 1.0) + 1.0) + 1.0)
     for m in range(1, n_iterations + 1):
         v_new = v.copy()
-        v_new[m:-m] = np.minimum(v[m:-m], (v[:-2*m] + v[2*m:]) / 2)
+        v_new[m:-m] = np.minimum(v[m:-m], (v[: -2 * m] + v[2 * m :]) / 2)
         v = v_new
     bg = (np.exp(np.exp(v) - 1.0) - 1.0) ** 2 - 1.0
     return np.maximum(bg, 0.0)
@@ -46,6 +46,7 @@ def snip_background_1d(y: np.ndarray, n_iterations: int) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # Non-destructive repair
 # ---------------------------------------------------------------------------
+
 
 def repair_masked_channels_1d(
     y: np.ndarray,
@@ -89,6 +90,7 @@ def repair_masked_channels_1d(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _coerce_float_1d_spectrum(y: np.ndarray, kernel_size: int) -> np.ndarray:
     """Cast y to float 1D; validate kernel_size is odd and ≥ 3."""
     arr = np.asarray(y, dtype=float)
@@ -130,6 +132,7 @@ def _zero_saturation_mask(y: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # Detection primitives (also used by other modules)
 # ---------------------------------------------------------------------------
+
 
 def positive_spike_mask_vs_median_smooth(
     y: np.ndarray,
@@ -215,6 +218,7 @@ def linear_interpolate_masked_channels_1d(
 # Main 1D removal function
 # ---------------------------------------------------------------------------
 
+
 def remove_cosmic_rays_1d(
     y: np.ndarray,
     *,
@@ -277,17 +281,13 @@ def remove_cosmic_rays_1d(
     zero_mask = _zero_saturation_mask(y1)
     cumulative_mask = zero_mask.copy()
     current = (
-        linear_interpolate_masked_channels_1d(y1, zero_mask)
-        if np.any(zero_mask)
-        else y1.copy()
+        linear_interpolate_masked_channels_1d(y1, zero_mask) if np.any(zero_mask) else y1.copy()
     )
 
     # ── Narrow passes (medfilt with kernel_size) ──────────────────────────
     for _ in range(max_passes):
         median_filtered = medfilt(current, kernel_size=kernel_size)
-        new_mask, _ = positive_spike_mask_vs_median_smooth(
-            current, median_filtered, threshold
-        )
+        new_mask, _ = positive_spike_mask_vs_median_smooth(current, median_filtered, threshold)
 
         if not np.any(new_mask):
             break

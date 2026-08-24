@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Substrate optical constants (n, k) for the lab's excitation wavelengths.
 
 Values are tabulated only at the two laser lines in use (355 nm and 320 nm).
@@ -20,16 +19,16 @@ from __future__ import annotations
 # {substrate_name: {laser_nm: (n, k)}}
 SUBSTRATE_NK: dict[str, dict[float, tuple[float, float]]] = {
     "Fused silica (SiO2)": {
-        355.0: (1.4761, 0.0),   # Malitson 1965 Sellmeier, k negligible
-        320.0: (1.4823, 0.0),   # Malitson 1965 Sellmeier, k negligible
+        355.0: (1.4761, 0.0),  # Malitson 1965 Sellmeier, k negligible
+        320.0: (1.4823, 0.0),  # Malitson 1965 Sellmeier, k negligible
     },
     "Soda-lime glass": {
         355.0: (1.539, 1.0e-6),  # VERIFY k — iron-content dependent
         320.0: (1.552, 5.0e-6),  # VERIFY both n and k near Fe3+ UV edge
     },
     "Si": {
-        355.0: (5.610, 3.010),   # Aspnes & Studna 1983 at 3.49 eV
-        320.0: (5.100, 3.610),   # VERIFY — interpolated near 3.87 eV
+        355.0: (5.610, 3.010),  # Aspnes & Studna 1983 at 3.49 eV
+        320.0: (5.100, 3.610),  # VERIFY — interpolated near 3.87 eV
     },
 }
 

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 High-level spectral denoising: :class:`Denoiser`.
 
@@ -23,6 +22,7 @@ from _shared._spectral import (
     with_new_values,
 )
 from _shared.utils import ensure_in_memory
+
 from ._pca import NComponents, denoise_spectra_pca
 
 if TYPE_CHECKING:
@@ -81,25 +81,18 @@ class Denoiser:
     spectral_dim: str | None = None
     pca_kwargs: dict[str, Any] = field(default_factory=dict)
     per_spectrum: bool = False
-    smoother: "SpectraSmoother | None" = None
+    smoother: SpectraSmoother | None = None
 
     def __post_init__(self) -> None:
         allowed: tuple[str, ...] = ("pca",)
         if self.method not in allowed:
+            raise ValueError(f"method must be one of {allowed!r}, got {self.method!r}")
+        if isinstance(self.n_components, float) and not (0.0 < self.n_components < 1.0):
             raise ValueError(
-                f"method must be one of {allowed!r}, got {self.method!r}"
-            )
-        if isinstance(self.n_components, float) and not (
-            0.0 < self.n_components < 1.0
-        ):
-            raise ValueError(
-                "float n_components must be in (0, 1) (variance ratio); "
-                f"got {self.n_components}"
+                f"float n_components must be in (0, 1) (variance ratio); got {self.n_components}"
             )
         if isinstance(self.n_components, int) and self.n_components < 1:
-            raise ValueError(
-                f"int n_components must be >= 1, got {self.n_components}"
-            )
+            raise ValueError(f"int n_components must be >= 1, got {self.n_components}")
 
     # ------------------------------------------------------------------
     # Public API
@@ -109,12 +102,9 @@ class Denoiser:
         """Return a denoised copy of ``spectra`` (no decomposition payload)."""
         if not isinstance(spectra, xr.DataArray):
             raise TypeError(
-                "Denoiser.denoise expects an xarray.DataArray; got "
-                f"{type(spectra).__name__}"
+                f"Denoiser.denoise expects an xarray.DataArray; got {type(spectra).__name__}"
             )
-        cleaned, meta, _ = self._clean_core(
-            spectra, return_decomposition=False
-        )
+        cleaned, meta, _ = self._clean_core(spectra, return_decomposition=False)
         return with_new_values(spectra, cleaned, _TREATMENT_KEY, meta)
 
     def denoise_with_decomposition(
@@ -133,12 +123,9 @@ class Denoiser:
         """
         if not isinstance(spectra, xr.DataArray):
             raise TypeError(
-                "Denoiser.denoise expects an xarray.DataArray; got "
-                f"{type(spectra).__name__}"
+                f"Denoiser.denoise expects an xarray.DataArray; got {type(spectra).__name__}"
             )
-        cleaned, meta, payload = self._clean_core(
-            spectra, return_decomposition=True
-        )
+        cleaned, meta, payload = self._clean_core(spectra, return_decomposition=True)
         out = with_new_values(spectra, cleaned, _TREATMENT_KEY, meta)
         return out, payload if payload is not None else {}
 
@@ -150,7 +137,7 @@ class Denoiser:
     # Internal
     # ------------------------------------------------------------------
 
-    def _get_smoother(self) -> "SpectraSmoother":
+    def _get_smoother(self) -> SpectraSmoother:
         """Return the configured smoother, or a default one."""
         if self.smoother is not None:
             return self.smoother

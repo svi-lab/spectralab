@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """NMF-based spectral pattern decomposition for stacks of spectra and 3D map cubes.
 
 NMF decomposes a *population* of non-negative spectra into a small number of
@@ -13,7 +12,8 @@ from the resulting curve rather than an automatic/hidden choice. See
 from __future__ import annotations
 
 import warnings
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 from sklearn.decomposition import NMF
@@ -45,9 +45,7 @@ def _fit_nmf(
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", ConvergenceWarning)
         abundances = nmf.fit_transform(matrix)
-        converged = not any(
-            issubclass(w.category, ConvergenceWarning) for w in caught
-        )
+        converged = not any(issubclass(w.category, ConvergenceWarning) for w in caught)
     return nmf, abundances, converged
 
 
@@ -108,14 +106,9 @@ def decompose_spectra_nmf(
     if n_components < 1:
         raise ValueError(f"n_components must be >= 1, got {n_components}")
     if n_components > n_spectra:
-        raise ValueError(
-            f"n_components ({n_components}) cannot exceed n_spectra "
-            f"({n_spectra})"
-        )
+        raise ValueError(f"n_components ({n_components}) cannot exceed n_spectra ({n_spectra})")
 
-    spectra_for_fit, per_spec_min, nan_row_mask, valid_idx = (
-        _nonnegative_fit_matrix(row_stack)
-    )
+    spectra_for_fit, per_spec_min, nan_row_mask, valid_idx = _nonnegative_fit_matrix(row_stack)
     has_nan = bool(nan_row_mask.any())
 
     # Fit on valid rows ONLY. _nonnegative_fit_matrix keeps the row count
@@ -155,9 +148,7 @@ def decompose_spectra_nmf(
     # the ratio is self-consistent even when NaN rows are present.
     total_ss = float(np.sum(valid_fit**2)) if valid_idx.any() else 0.0
     fraction_var_explained = (
-        1.0 - (nmf.reconstruction_err_**2 / total_ss)
-        if total_ss > 0
-        else float("nan")
+        1.0 - (nmf.reconstruction_err_**2 / total_ss) if total_ss > 0 else float("nan")
     )
 
     meta: dict[str, Any] = {
@@ -254,9 +245,7 @@ def compute_nmf_diagnostic_curve(
         )
         err = float(nmf.reconstruction_err_)
         reconstruction_error.append(err)
-        fraction_var_explained.append(
-            1.0 - (err**2 / total_ss) if total_ss > 0 else float("nan")
-        )
+        fraction_var_explained.append(1.0 - (err**2 / total_ss) if total_ss > 0 else float("nan"))
         converged.append(ok)
         n_iter.append(int(nmf.n_iter_))
         if progress_callback is not None:

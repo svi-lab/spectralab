@@ -1,8 +1,5 @@
-# -*- coding: utf-8 -*-
 """backend.background — substrate PL background suppression."""
 
-from ._suppressor import BackgroundSuppressor
-from ._scale import interp_reference
 from ._presets import (
     Preset,
     find_preset,
@@ -13,6 +10,8 @@ from ._presets import (
     list_thicknesses,
     load_preset,
 )
+from ._scale import interp_reference
+from ._suppressor import BackgroundSuppressor
 
 __all__ = [
     "BackgroundSuppressor",

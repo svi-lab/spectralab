@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Built-in substrate background presets loaded from data/*.npz."""
 
 from __future__ import annotations
@@ -141,9 +140,7 @@ def load_preset(key: str) -> tuple[np.ndarray, np.ndarray, dict[str, float]]:
             raise KeyError(f"Preset {key} has no intensity array")
 
         laser_power = float(d["laser_power"]) if "laser_power" in d else float("nan")
-        exposure_time = (
-            float(d["exposure_time"]) if "exposure_time" in d else float("nan")
-        )
+        exposure_time = float(d["exposure_time"]) if "exposure_time" in d else float("nan")
 
     meta = {"laser_power": laser_power, "exposure_time": exposure_time}
     return x, y, meta
