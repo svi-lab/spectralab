@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 import warnings
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -23,10 +24,6 @@ from _shared._spectral import (
     transpose_spectral_last,
     with_new_values,
 )
-# Background suppression is currently disabled app-wide — see
-# stage_background_suppress() below. Kept importable for a future re-enable.
-# from background import BackgroundSuppressor
-# from background._scale import interp_reference
 
 
 # ---------------------------------------------------------------------------
@@ -234,10 +231,10 @@ def stage_exclude(
     and every index-based downstream analysis. Downstream code already treats
     all-NaN rows as invalid (PCA, NMF/MCR, fit_map_gaussian, the charts).
 
-    This runs as the final pipeline stage — see ``preprocess`` below and
-    ``frontend/pipeline_cache.py``, which applies it on top of the memoized
-    pre-exclusion result so editing the mask never invalidates the CRR /
-    denoise caches.
+    This runs as the final pipeline stage — see ``apply_exclusion`` /
+    ``preprocess`` below and ``frontend/pipeline_cache.py``, which applies it
+    on top of the memoized pre-exclusion result so editing the mask never
+    invalidates the CRR / denoise caches.
     """
     sdim = resolve_spectral_dim(da, spectral_dim)
     da_t, orig_order = transpose_spectral_last(da, sdim)
@@ -274,34 +271,6 @@ def stage_exclude(
     return _restore_dtype(out, da.dtype)
 
 
-# Background suppression is currently disabled app-wide (no UI entry point
-# calls this) — kept for a future re-enable. Fixed here: the reference used
-# to be cast to da.dtype *before* the interpolation branch, so a mismatched-
-# length reference got resampled at reduced precision when the reader runs
-# in float32 mode; interpolation now happens at full precision and only the
-# result is cast down.
-# def stage_background_suppress(
-#     da: xr.DataArray, bg_params: dict, spectral_dim: str
-# ) -> xr.DataArray:
-#     reference = np.asarray(bg_params["reference"], dtype=float)
-#     spectral_coords = da.coords[spectral_dim].values
-#
-#     # Interpolate reference onto the data's spectral axis if needed
-#     if len(reference) != len(spectral_coords):
-#         ref_x = np.asarray(bg_params["reference_x"], dtype=float)
-#         # np.interp always returns float64 — cast back to the data's dtype.
-#         reference, _ = interp_reference(ref_x, reference, spectral_coords)
-#     reference = reference.astype(da.dtype, copy=False)
-#
-#     suppressor = BackgroundSuppressor(
-#         reference=reference,
-#         spectral_dim=spectral_dim,
-#         fixed_scale=bg_params["fixed_scale"],
-#     )
-#     da_out, _bg_meta = suppressor.suppress(da)
-#     return _restore_dtype(da_out, da.dtype)
-
-
 # ---------------------------------------------------------------------------
 # Dataset assembly
 # ---------------------------------------------------------------------------
@@ -331,8 +300,106 @@ def assemble_dataset(
 
 
 # ---------------------------------------------------------------------------
-# Preprocessing pipeline (single-shot, non-cached)
+# Stage chain — single sequencer (cached frontend and preprocess() both use this)
 # ---------------------------------------------------------------------------
+
+RecipeFn = Callable[[xr.DataArray, dict[str, Any]], xr.DataArray]
+
+
+def run_stage_chain(
+    dataset: SpectralDataset,
+    params: dict[str, Any],
+    keep_stages: bool = True,
+    *,
+    cosmic_ray: RecipeFn | None = None,
+    denoise: RecipeFn | None = None,
+) -> xr.Dataset:
+    """Normalize → CleanData → CRR → Denoise. Does not apply exclusion.
+
+    ``cosmic_ray`` / ``denoise`` receive ``(da, recipe)`` where ``recipe`` is
+    the cumulative param dict up to (and including) that stage — the frontend
+    cache keys off this snapshot. Defaults call the matching ``stage_*`` with
+    the stage's own subdict.
+    """
+    apply_crr = cosmic_ray or (
+        lambda da, rec: stage_cosmic_ray_removal(da, rec["crr"])
+    )
+    apply_denoise = denoise or (
+        lambda da, rec: stage_denoise(da, rec["denoise"])
+    )
+
+    da: xr.DataArray = dataset.da
+    stage_records: list[StageRecord] = []
+    recipe: dict[str, Any] = {}
+
+    # ── Normalization 1 (raw) ──────────────────────────────────────────
+    recipe["norm1_enabled"] = bool(params.get("norm1_enabled"))
+    recipe["norm1"] = params.get("norm1", {})
+    if recipe["norm1_enabled"]:
+        da = stage_normalize(da, recipe["norm1"])
+        stage_records.append(("norm_before", "Normalized (raw)", da))
+    else:
+        stage_records.append(("raw", "Raw", dataset.da))
+
+    # ── CleanData ──────────────────────────────────────────────────────
+    recipe["cd_enabled"] = bool(params.get("cd_enabled"))
+    recipe["cd"] = params.get("cd", {})
+    if recipe["cd_enabled"]:
+        da = stage_clean_data(da, recipe["cd"])
+        stage_records.append(("clean_data", "Clean Data", da))
+
+    # ── CosmicRayRemover ───────────────────────────────────────────────
+    # Recipe grows even when the stage is off so a later cached stage's key
+    # still includes every upstream flag (same as the old frontend copy).
+    recipe["crr_enabled"] = bool(params.get("crr_enabled"))
+    recipe["crr"] = params.get("crr", {})
+    if recipe["crr_enabled"]:
+        da = apply_crr(da, dict(recipe))
+    recipe["norm2_enabled"] = bool(params.get("norm2_enabled"))
+    recipe["norm2"] = params.get("norm2", {})
+    if recipe["crr_enabled"]:
+        if recipe["norm2_enabled"]:
+            da = stage_normalize(da, recipe["norm2"])
+            stage_records.append(("norm_post_crr", "Normalized (post-CR)", da))
+        else:
+            stage_records.append(("crr", "CR Removed", da))
+
+    # ── Denoiser ───────────────────────────────────────────────────────
+    recipe["denoise_enabled"] = bool(params.get("denoise_enabled"))
+    recipe["denoise"] = params.get("denoise", {})
+    if recipe["denoise_enabled"]:
+        da = apply_denoise(da, dict(recipe))
+    recipe["norm3_enabled"] = bool(params.get("norm3_enabled"))
+    recipe["norm3"] = params.get("norm3", {})
+    if recipe["denoise_enabled"]:
+        if recipe["norm3_enabled"]:
+            da = stage_normalize(da, recipe["norm3"])
+            stage_records.append(("norm_post_denoise", "Normalized (final)", da))
+        else:
+            stage_records.append(("denoised", "Denoised", da))
+
+    return assemble_dataset(dataset, stage_records, keep_stages=keep_stages)
+
+
+def apply_exclusion(
+    ds_pre: xr.Dataset,
+    mask: np.ndarray,
+    spectral_dim: str,
+    keep_stages: bool,
+) -> xr.Dataset:
+    """Append the manual-exclusion stage on top of a pre-exclusion Dataset.
+
+    ``ds_pre`` is a shared memo reference in the app — its attrs dicts are
+    copied, never extended in place.
+    """
+    masked = stage_exclude(ds_pre[ds_pre.attrs["final_var"]], mask, spectral_dim)
+
+    ds = ds_pre.assign({"excluded": masked}) if keep_stages else xr.Dataset({"excluded": masked})
+    ds.attrs["stage_vars"] = [*ds_pre.attrs["stage_vars"], "excluded"]
+    ds.attrs["stage_labels"] = {**ds_pre.attrs["stage_labels"], "excluded": "Excluded"}
+    ds.attrs["final_var"] = "excluded"
+    return ds
+
 
 def preprocess(
     dataset: SpectralDataset,
@@ -341,79 +408,16 @@ def preprocess(
 ) -> xr.Dataset:
     """Run the full preprocessing pipeline and return one xr.Dataset.
 
-    Non-cached convenience wrapper chaining the stage_* functions — the
-    Streamlit app routes through frontend/pipeline_cache.py instead, which
-    runs the same sequencing with a per-stage cache between steps.
-
-    Manual exclusion is read from ``params["excl"]["mask"]`` — a single
-    boolean spatial mask, since this entry point processes one dataset. The
-    frontend's equivalent key is ``params["excl"]["masks"]``, a
-    ``{filename: mask}`` dict, because get_finals loops over every loaded file.
+    Same sequencer as the Streamlit app (``run_stage_chain``); the app injects
+    cached CRR/denoise callables. Manual exclusion is read from
+    ``params["excl"]["mask"]`` — a single boolean spatial mask. The frontend's
+    equivalent key is ``params["excl"]["masks"]``, a ``{filename: mask}`` dict.
     """
-    da: xr.DataArray = dataset.da
-    stage_records: list[StageRecord] = []
-
-    # Background suppression is currently disabled app-wide (see
-    # stage_background_suppress above), so normalization is never deferred.
-    # When bg_enabled: subtraction runs on data after all selected
-    # preprocessing steps but WITHOUT min-max/area normalization (which is
-    # data-dependent and would invalidate the physics scale and distort the
-    # fitted one) — the user's chosen normalization still runs, deferred
-    # until after the subtraction.
-    # defer_norm = bool(params.get("bg_enabled"))
-    defer_norm = False
-
-    # ── Normalization 1 (raw) ──────────────────────────────────────────
-    if params.get("norm1_enabled") and not defer_norm:
-        da = stage_normalize(da, params["norm1"])
-        stage_records.append(("norm_before", "Normalized (raw)", da))
-    else:
-        stage_records.append(("raw", "Raw", dataset.da))
-
-    # ── CleanData ──────────────────────────────────────────────────────
-    if params.get("cd_enabled"):
-        da = stage_clean_data(da, params["cd"])
-        stage_records.append(("clean_data", "Clean Data", da))
-
-    # ── CosmicRayRemover ───────────────────────────────────────────────
-    if params.get("crr_enabled"):
-        da = stage_cosmic_ray_removal(da, params["crr"])
-        if params.get("norm2_enabled") and not defer_norm:
-            da = stage_normalize(da, params["norm2"])
-            stage_records.append(("norm_post_crr", "Normalized (post-CR)", da))
-        else:
-            stage_records.append(("crr", "CR Removed", da))
-
-    # ── Denoiser ───────────────────────────────────────────────────────
-    if params.get("denoise_enabled"):
-        da = stage_denoise(da, params["denoise"])
-        if params.get("norm3_enabled") and not defer_norm:
-            da = stage_normalize(da, params["norm3"])
-            stage_records.append(("norm_post_denoise", "Normalized (final)", da))
-        else:
-            stage_records.append(("denoised", "Denoised", da))
-
-    # ── Background Suppression (disabled app-wide — see stage_background_suppress) ──
-    # if params.get("bg_enabled"):
-    #     da = stage_background_suppress(da, params["bg"], dataset.spectral_dim)
-    #     stage_records.append(("bg_removed", "Background removed", da))
-    #
-    #     # Deferred normalization: apply the user's chosen method now that the
-    #     # subtraction has happened in raw intensity space.
-    #     if defer_norm and (params.get("norm1_enabled") or params.get("norm2_enabled")
-    #                        or params.get("norm3_enabled")):
-    #         norm_p = params.get("norm1") or params.get("norm2") or params.get("norm3") or {}
-    #         if norm_p.get("method"):
-    #             da = stage_normalize(da, norm_p)
-    #             stage_records.append(("norm_post_bg", "Normalized (post-suppression)", da))
-
-    # ── Manual exclusion (always last) ─────────────────────────────────
+    ds = run_stage_chain(dataset, params, keep_stages)
     excl_mask = (params.get("excl") or {}).get("mask")
     if excl_mask is not None and np.any(excl_mask):
-        da = stage_exclude(da, excl_mask, dataset.spectral_dim)
-        stage_records.append(("excluded", "Excluded", da))
-
-    return assemble_dataset(dataset, stage_records, keep_stages=keep_stages)
+        ds = apply_exclusion(ds, excl_mask, dataset.spectral_dim, keep_stages)
+    return ds
 
 
 def _parse_n_components(sc_p: dict) -> int | float | str | None:

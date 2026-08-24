@@ -4,14 +4,12 @@
 All five pages need the processed DataArray per loaded file. Only the two
 stages that are actually expensive to recompute — Cosmic Ray Removal and
 Denoising (PCA population fit) — get their own `@st.cache_data` entry, keyed
-on the cumulative "recipe so far" so tweaking a downstream parameter (e.g.
-the bg scale) never recomputes them. Normalize / CleanData / Background
-Suppression are cheap vectorized numpy (no fitting, no iteration) and run
-eagerly on every call instead — this keeps the cache count small enough that
-`max_entries` can comfortably cover a realistic number of simultaneously
-loaded files without thrashing (see the note on `_STAGE_MAX_ENTRIES` below),
-and it avoids paying st.cache_data's hash + copy-on-read overhead for stages
-that are cheaper to just recompute.
+on the cumulative "recipe so far" so a downstream param change never
+recomputes them. Normalize / CleanData are cheap vectorized numpy and run
+eagerly on every call instead.
+
+Sequencing lives in ``backend.pipeline.run_stage_chain``. This module only
+injects the cached CRR/denoise callables and the session-level finals memo.
 
 `get_finals` iterates every loaded file on EVERY call (once per page per
 Streamlit rerun), so with N files loaded, only the `max_entries` most-recent
@@ -20,10 +18,7 @@ smaller than the number of loaded files, the cache thrashes and the
 expensive stages recompute on literally every rerun instead of ever hitting.
 
 The recipe dict grows stage by stage: each cached call's key contains every
-upstream parameter plus the stage's own. `bg_enabled` (the bool) enters at
-stage 1 because it defers all normalization (see preprocess() in
-backend/pipeline.py); the `bg` params subdict (reference array + scale)
-never needs to enter the recipe at all since bg suppression isn't cached.
+upstream parameter plus the stage's own.
 
 Session-level final-result memo
 --------------------------------
@@ -34,18 +29,13 @@ On top of the two `st.cache_data` stage caches above sits a plain dict in
 for a same-params rerun (the overwhelmingly common case: the user is looking
 at a chart, not touching a widget) that means every page load pays a full
 pickle.loads of every upstream array even though nothing changed. The memo
-returns the exact same object reference instead — zero copy, zero pickle —
-and lives in `st.session_state`, so its scope is naturally per-browser-session
-(correct per-user isolation once this app is deployed online for multiple
-concurrent users).
+returns the exact same object reference instead — zero copy, zero pickle.
 
 The two layers serve different reuse patterns and both stay:
-  - the memo serves same-params reruns (dominant case, <1 ms/file: only a
-    digest to compute, no stage code runs at all);
+  - the memo serves same-params reruns (dominant case, <1 ms/file);
   - the `_crr_cached`/`_denoise_cached` st.cache_data entries serve
-    cross-params reuse (e.g. tweaking the bg scale after CRR/denoise already
-    ran — new digest, memo miss, but the expensive stages still hit their own
-    cache since their own upstream recipe didn't change).
+    cross-params reuse (e.g. toggling a later normalization after CRR
+    already ran — new digest, memo miss, but CRR still hits its own cache).
 
 Manual exclusion
 ----------------
@@ -58,22 +48,17 @@ a separate `mask_digest` tag appended to that base:
 
 Two reasons. First, the digest stays per-file: editing one file's mask cannot
 invalidate another file's memo entry (the params dict is global and shared by
-every page). Second, and more importantly, `stage_exclude` is applied *on top
-of* the memoized pre-exclusion Dataset (key `base_digest`, mask_tag = "")
-rather than by re-running the stage chain — so a mask edit never reaches
-`_crr_cached` / `_denoise_cached` and never pays their unpickle, let alone a
-recompute. Each edit costs exactly one `np.where` copy of the final array, for
-the edited file only. Files with an empty mask produce an empty tag and hit
-precisely the key they would have had before this feature existed.
+every page). Second, `apply_exclusion` is applied *on top of* the memoized
+pre-exclusion Dataset (key `base_digest`, mask_tag = "") rather than by
+re-running the stage chain — so a mask edit never reaches `_crr_cached` /
+`_denoise_cached`. Each edit costs exactly one `np.where` copy of the final
+array, for the edited file only.
 
-**Immutability contract**: memo'd Datasets are shared references, handed out
-to every page that asks for the same (file, params) combo in the same
-rerun. This relies on the codebase-wide invariant that every stage function
-returns a *new* DataArray rather than mutating its input in place (already
-true of every `stage_*` function here and every backend transform they
-call) — no consumer may write into a Dataset/DataArray it got from
-`get_finals`. `_apply_exclusion` is held to the same rule: it copies the
-attrs dicts it extends rather than mutating the pre-exclusion Dataset's.
+**Immutability contract**: memo'd Datasets are shared references. Every stage
+function returns a *new* DataArray rather than mutating its input — no
+consumer may write into a Dataset/DataArray it got from `get_finals`.
+`apply_exclusion` copies the attrs dicts it extends rather than mutating the
+pre-exclusion Dataset's.
 """
 
 from __future__ import annotations
@@ -86,13 +71,10 @@ import streamlit as st
 import xarray as xr
 
 from backend.pipeline import (
-    assemble_dataset,
-    # stage_background_suppress,  # background suppression disabled app-wide
-    stage_clean_data,
+    apply_exclusion,
+    run_stage_chain,
     stage_cosmic_ray_removal,
     stage_denoise,
-    stage_exclude,
-    stage_normalize,
 )
 from backend._shared.dataset import SpectralDataset
 from .exclusion import mask_digest
@@ -120,6 +102,12 @@ _STAGE_MAX_ENTRIES = 16
 _FINALS_MEMO_KEY = "_sl_finals_memo"
 _FINALS_MEMO_CAPS: dict[bool, int] = {False: 16, True: 16}
 
+# Keys that must not affect the shared params digest. ``excl`` is re-applied
+# per file via mask_digest. ``bg`` / ``bg_enabled`` are leftover keys from
+# older sessions — stripping them keeps a re-opened app on the same memo
+# entries after those fields were removed from the live params dict.
+_DIGEST_SKIP = frozenset({"excl", "bg", "bg_enabled"})
+
 
 def default_pipeline_params() -> dict[str, Any]:
     """All-disabled pipeline params for pages opened before Preprocessing has run."""
@@ -130,7 +118,6 @@ def default_pipeline_params() -> dict[str, Any]:
         "norm2_enabled": False, "norm2": {},
         "denoise_enabled": False, "denoise": {},
         "norm3_enabled": False, "norm3": {},
-        "bg_enabled":    False, "bg":    {},
         "excl":          {},
     }
 
@@ -153,9 +140,7 @@ def _denoise_cached(file_hash: str, _da: xr.DataArray, recipe: dict) -> xr.DataA
 
 
 # ---------------------------------------------------------------------------
-# Orchestrator — same conditional sequencing as backend preprocess(). Only
-# CRR/denoise go through a cache boundary; normalize/clean/bg run eagerly
-# (cheap, no fitting) — see module docstring.
+# Orchestrator — injects cached CRR/denoise into backend.run_stage_chain.
 # ---------------------------------------------------------------------------
 
 def _run_stage_chain(
@@ -164,78 +149,13 @@ def _run_stage_chain(
     params: dict[str, Any],
     keep_stages: bool,
 ) -> xr.Dataset:
-    da: xr.DataArray = dataset.da
-    stage_records: list[tuple[str, str, xr.DataArray]] = []
-
-    # Background suppression is currently disabled app-wide (see
-    # backend/pipeline.py::stage_background_suppress) — bg_enabled is always
-    # False, so normalization is never deferred. When bg is re-enabled, this
-    # BOOL must go back to being part of every stage's key from here on (its
-    # own params — reference array, fixed_scale — only join at the bg stage).
-    # recipe: dict[str, Any] = {"bg_enabled": bool(params.get("bg_enabled"))}
-    recipe: dict[str, Any] = {"bg_enabled": False}
-    defer_norm = recipe["bg_enabled"]
-
-    # ── Normalization 1 (raw) ──────────────────────────────────────────
-    recipe["norm1_enabled"] = bool(params.get("norm1_enabled"))
-    recipe["norm1"] = params.get("norm1", {})
-    if recipe["norm1_enabled"] and not defer_norm:
-        da = stage_normalize(da, recipe["norm1"])
-        stage_records.append(("norm_before", "Normalized (raw)", da))
-    else:
-        stage_records.append(("raw", "Raw", dataset.da))
-
-    # ── CleanData ──────────────────────────────────────────────────────
-    recipe["cd_enabled"] = bool(params.get("cd_enabled"))
-    recipe["cd"] = params.get("cd", {})
-    if recipe["cd_enabled"]:
-        da = stage_clean_data(da, recipe["cd"])
-        stage_records.append(("clean_data", "Clean Data", da))
-
-    # ── CosmicRayRemover ───────────────────────────────────────────────
-    recipe["crr_enabled"] = bool(params.get("crr_enabled"))
-    recipe["crr"] = params.get("crr", {})
-    if recipe["crr_enabled"]:
-        da = _crr_cached(file_hash, da, dict(recipe))
-    recipe["norm2_enabled"] = bool(params.get("norm2_enabled"))
-    recipe["norm2"] = params.get("norm2", {})
-    if recipe["crr_enabled"]:
-        if recipe["norm2_enabled"] and not defer_norm:
-            da = stage_normalize(da, recipe["norm2"])
-            stage_records.append(("norm_post_crr", "Normalized (post-CR)", da))
-        else:
-            stage_records.append(("crr", "CR Removed", da))
-
-    # ── Denoiser ───────────────────────────────────────────────────────
-    recipe["denoise_enabled"] = bool(params.get("denoise_enabled"))
-    recipe["denoise"] = params.get("denoise", {})
-    if recipe["denoise_enabled"]:
-        da = _denoise_cached(file_hash, da, dict(recipe))
-    recipe["norm3_enabled"] = bool(params.get("norm3_enabled"))
-    recipe["norm3"] = params.get("norm3", {})
-    if recipe["denoise_enabled"]:
-        if recipe["norm3_enabled"] and not defer_norm:
-            da = stage_normalize(da, recipe["norm3"])
-            stage_records.append(("norm_post_denoise", "Normalized (final)", da))
-        else:
-            stage_records.append(("denoised", "Denoised", da))
-
-    # ── Background Suppression (disabled app-wide, cheap — not cached) ──
-    # if recipe["bg_enabled"]:
-    #     bg_params = params.get("bg", {})
-    #     da = stage_background_suppress(da, bg_params, dataset.spectral_dim)
-    #     stage_records.append(("bg_removed", "Background removed", da))
-    #
-    #     # Deferred normalization: the chosen method runs after the
-    #     # subtraction, in raw intensity space.
-    #     if defer_norm and (recipe["norm1_enabled"] or recipe["norm2_enabled"]
-    #                        or recipe["norm3_enabled"]):
-    #         norm_p = recipe["norm1"] or recipe["norm2"] or recipe["norm3"] or {}
-    #         if norm_p.get("method"):
-    #             da = stage_normalize(da, norm_p)
-    #             stage_records.append(("norm_post_bg", "Normalized (post-suppression)", da))
-
-    return assemble_dataset(dataset, stage_records, keep_stages=keep_stages)
+    return run_stage_chain(
+        dataset,
+        params,
+        keep_stages,
+        cosmic_ray=lambda da, rec: _crr_cached(file_hash, da, rec),
+        denoise=lambda da, rec: _denoise_cached(file_hash, da, rec),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -246,9 +166,8 @@ def _digest_walk(obj: Any, h: "hashlib._Hash") -> None:
     """Feed a deterministic byte representation of ``obj`` into ``h``.
 
     Dict keys are sorted so key-insertion order never changes the digest;
-    ndarrays (e.g. a bg reference spectrum) are hashed by raw
-    bytes+dtype+shape rather than ``repr`` (which truncates/summarizes large
-    arrays and would collide different reference spectra together).
+    ndarrays are hashed by raw bytes+dtype+shape rather than ``repr``
+    (which truncates/summarizes large arrays).
     """
     if isinstance(obj, dict):
         h.update(b"d")
@@ -269,8 +188,7 @@ def _digest_walk(obj: Any, h: "hashlib._Hash") -> None:
 
 
 def _params_digest(params: dict[str, Any]) -> str:
-    """Deterministic fingerprint of a pipeline params dict (<1 ms typical —
-    the largest thing it ever walks is a ~9341-float bg reference)."""
+    """Deterministic fingerprint of a pipeline params dict (<1 ms typical)."""
     h = hashlib.blake2b(digest_size=16)
     _digest_walk(params, h)
     return h.hexdigest()
@@ -312,30 +230,6 @@ def _final_only_view(full_ds: xr.Dataset) -> xr.Dataset:
     return ds
 
 
-def _apply_exclusion(
-    ds_pre: xr.Dataset,
-    mask: np.ndarray,
-    spectral_dim: str,
-    keep_stages: bool,
-) -> xr.Dataset:
-    """Append the manual-exclusion stage on top of a pre-exclusion Dataset.
-
-    Deliberately NOT part of `_run_stage_chain`: the whole point is to build on
-    the memoized pre-exclusion result so a mask edit never touches the CRR /
-    denoise caches (see the module docstring).
-
-    `ds_pre` is a shared memo reference — its attrs dicts are copied, never
-    extended in place.
-    """
-    masked = stage_exclude(ds_pre[ds_pre.attrs["final_var"]], mask, spectral_dim)
-
-    ds = ds_pre.assign({"excluded": masked}) if keep_stages else xr.Dataset({"excluded": masked})
-    ds.attrs["stage_vars"] = [*ds_pre.attrs["stage_vars"], "excluded"]
-    ds.attrs["stage_labels"] = {**ds_pre.attrs["stage_labels"], "excluded": "Excluded"}
-    ds.attrs["final_var"] = "excluded"
-    return ds
-
-
 def _finals_for_file(
     entry: dict[str, Any],
     params: dict[str, Any],
@@ -373,7 +267,7 @@ def _finals_for_file(
     if not mask_tag:
         return ds_pre
 
-    ds = _apply_exclusion(ds_pre, mask, dataset.spectral_dim, keep_stages)
+    ds = apply_exclusion(ds_pre, mask, dataset.spectral_dim, keep_stages)
     _memo_put(memo, key, ds)
     return ds
 
@@ -406,7 +300,7 @@ def get_finals(
     masks = (params.get("excl") or {}).get("masks") or {}
     # The mask is excluded from the shared digest and re-enters per file as a
     # key suffix — see the module docstring.
-    base_digest = _params_digest({k: v for k, v in params.items() if k != "excl"})
+    base_digest = _params_digest({k: v for k, v in params.items() if k not in _DIGEST_SKIP})
     memo = _finals_memo()
 
     all_datasets: dict[str, xr.Dataset] = {}

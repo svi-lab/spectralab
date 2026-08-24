@@ -10,7 +10,6 @@ Public API (re-exported here):
   harmonic.py  — Nd:YAG laser-harmonic and grating 2nd-order artifact notch removal
 
 Private implementation details (not imported outside this package):
-  _1d.py   — low-level 1D medfilt/MAD routines used by mask_1d
   _mad.py  — scaled-MAD noise estimator used by mask_1d and mask_map
 """
 

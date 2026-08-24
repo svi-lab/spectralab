@@ -9,6 +9,7 @@ import streamlit as st
 
 from backend.pipeline import load_wdf
 from backend._shared.dataset import SpectralDataset
+from frontend.session import clear_analysis_state
 
 
 @st.cache_data(show_spinner=False, max_entries=16)
@@ -56,24 +57,7 @@ def render_sidebar() -> bool:
     with st.container(key="remove_files"):
         if st.button("Remove all files", width="stretch"):
             st.session_state["_sl_uploader_key"] += 1
-            st.session_state.pop("sl_pipeline_params", None)
-            st.session_state.pop("sl_sample_structure", None)
-            st.session_state.pop("sl_bg_ui", None)
-            st.session_state.pop("sl_excluded", None)
-            st.session_state.pop("sl_excluded_undo", None)
-            st.session_state.pop("_excl_last_selection", None)
-            # Finals memo keys include file_id, so stale entries can never be
-            # served to a new upload set — but there's no other eviction
-            # trigger, so drop them here rather than let them sit resident.
-            st.session_state.pop("_sl_finals_memo", None)
-            for _key in (
-                "cd_enabled", "crr_enabled", "denoise_enabled", "norm_selection", "prog_title",
-                "excl_file", "excl_mode", "excl_rows", "excl_cols", "excl_pixels", "excl_flat",
-                "bg_enabled", "bg_ref_source", "bg_ref_file",
-                "bg_row_min", "bg_row_max", "bg_col_min", "bg_col_max",
-                "bg_pt_ratio", "bg_c_override_on", "bg_c_override",
-            ):
-                st.session_state.pop(_key, None)
+            clear_analysis_state(st.session_state)
             st.rerun()
 
     # ── Load files ────────────────────────────────────────────────────────────

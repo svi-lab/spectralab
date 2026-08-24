@@ -22,9 +22,7 @@ Session state
                   (e.g. Decomposition's fixed-component reference).
     enabled     : bool — the "Calculate optical model" toggle.
     summary     : dict | None — output of ``film_stack_summary`` /
-                  ``bare_substrate_summary``. Includes ``c_physics`` (kept for
-                  background suppression even though it is no longer
-                  displayed). None while the toggle is off.
+                  ``bare_substrate_summary``. None while the toggle is off.
     laser_nm, substrate, sub_n, sub_k, sub_d_mm, film_d_nm, film_n, film_k
                 — last-entered inputs, preserved across toggle off/on.
 
@@ -191,8 +189,8 @@ def _render_bare_substrate_summary(bare: dict) -> None:
         unsafe_allow_html=True,
     )
     st.caption(
-        "Reference file: the fraction entering (1 − R) is the denominator "
-        "of the physics suppression scale."
+        "Reference file: the fraction entering (1 − R) is the light that "
+        "reaches the substrate after the air interface."
     )
 
 
@@ -200,8 +198,7 @@ def _render_sample_structure_card(name: str, entry: dict) -> None:
     """Sample-type radio (always visible) + opt-in optical model.
 
     The toggle gates all optics inputs and computation; when it is off the
-    stored ``summary`` is None, which disables the physics background scale
-    for this file, but the previously entered inputs are preserved so
+    stored ``summary`` is None, but previously entered inputs are preserved so
     re-enabling restores them.
     """
     ds = entry["dataset"]
@@ -233,8 +230,7 @@ def _render_sample_structure_card(name: str, entry: dict) -> None:
             key=f"ss_{h}_calc",
             help=(
                 "Compute the excitation light distribution (reflection / absorption) "
-                "for this stack via TMM and Beer–Lambert. Also required for "
-                "the physics background-suppression scale."
+                "for this stack via TMM and Beer–Lambert."
             ),
         )
 
@@ -401,8 +397,6 @@ def _pipeline_export_caption(params: dict | None) -> str:
         stages.append("CRR")
     if params.get("denoise_enabled"):
         stages.append("denoising")
-    if params.get("bg_enabled"):
-        stages.append("background suppression")
     if (params.get("excl") or {}).get("masks"):
         stages.append("manual exclusion (NaN in place — shape preserved)")
     if not stages:

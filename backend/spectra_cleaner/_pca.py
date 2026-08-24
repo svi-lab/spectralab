@@ -5,7 +5,7 @@ PCA decomposes a *population* of spectra into orthogonal components and
 reconstructs each spectrum from the leading ones. Components dominated by
 uncorrelated per-channel noise are dropped, so the reconstruction is a
 denoised version of the input. This requires more than one spectrum — see
-:class:`wdfkit.spectra_cleaner.SpectraCleaner` for the user-facing API.
+:class:`spectra_cleaner.Denoiser` for the user-facing API.
 """
 
 from __future__ import annotations
@@ -15,27 +15,9 @@ from typing import Any
 import numpy as np
 from sklearn import decomposition
 
+from _shared._factorization import _flatten_to_row_stack
+
 NComponents = int | float | str | None
-
-
-def _flatten_to_row_stack(
-    values: np.ndarray,
-) -> tuple[np.ndarray, tuple[int, ...]]:
-    """Reshape ``(..., n_spectral)`` to ``(n_spectra, n_spectral)``.
-
-    Returns the row-stack and the original spatial shape (everything
-    before the spectral axis), so the cleaned output can be reshaped
-    back.
-    """
-    arr = np.asarray(values, dtype=float)
-    if arr.ndim < 2:
-        raise ValueError(
-            "PCA denoising needs >= 2D input (last axis = spectral); "
-            f"got ndim={arr.ndim}"
-        )
-    spatial_shape = arr.shape[:-1]
-    n_spectral = arr.shape[-1]
-    return arr.reshape(-1, n_spectral), spatial_shape
 
 
 def _per_spectrum_min(row_stack: np.ndarray) -> np.ndarray:
