@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Shared runtime helpers."""
 
 from __future__ import annotations
@@ -21,7 +20,6 @@ def ensure_in_memory(
     Returns the DataArray unchanged if already in memory.
     """
     if da.chunks is not None:
-        import numpy as np
         size_gb = da.nbytes / 2**30
         warnings.warn(
             f"{caller} received a Dask-backed DataArray "

@@ -8,23 +8,38 @@ import numpy as np
 import xarray as xr
 from streamlit_echarts import JsCode
 
-FS_TITLE  = 26
-FS_AXIS   = 22
-FS_TICK   = 18
+FS_TITLE = 26
+FS_AXIS = 22
+FS_TICK = 18
 FS_LEGEND = 20
 
 COLORS = [
-    "#c3121e", "#0348a1", "#ffb01c", "#027608",
-    "#1dace6", "#9c5300", "#9966cc", "#ff4500",
+    "#c3121e",
+    "#0348a1",
+    "#ffb01c",
+    "#027608",
+    "#1dace6",
+    "#9c5300",
+    "#9966cc",
+    "#ff4500",
 ]
 
 MULTI_COLORS = [
-    "#0348a1", "#c3121e", "#027608", "#ffb01c",
-    "#9966cc", "#1dace6", "#9c5300", "#ff4500",
-    "#5e4fa2", "#3288bd", "#66c2a5", "#abdda4",
+    "#0348a1",
+    "#c3121e",
+    "#027608",
+    "#ffb01c",
+    "#9966cc",
+    "#1dace6",
+    "#9c5300",
+    "#ff4500",
+    "#5e4fa2",
+    "#3288bd",
+    "#66c2a5",
+    "#abdda4",
 ]
 
-VIRIDIS  = ["#440154", "#31688e", "#35b779", "#fde725"]
+VIRIDIS = ["#440154", "#31688e", "#35b779", "#fde725"]
 PLASMA_R = ["#f0f921", "#fca636", "#e16462", "#b12a90", "#6a00a8", "#0d0887"]
 
 # Display-only column (spectral-axis) downsampling — analysis/exports always
@@ -39,9 +54,9 @@ MAX_POINTS_PER_TRACE = 1200
 MAX_ROWS_DRAWN = 5000
 
 UNIT_LABELS = {
-    "wavelength":  "wavelength (nm)",
-    "energy":      "energy (eV)",
-    "wavenumber":  "wavenumber (cm⁻¹)",
+    "wavelength": "wavelength (nm)",
+    "energy": "energy (eV)",
+    "wavenumber": "wavenumber (cm⁻¹)",
     "raman_shift": "Raman shift (cm⁻¹)",
 }
 
@@ -49,6 +64,7 @@ UNIT_LABELS = {
 # ---------------------------------------------------------------------------
 # Unit conversion (public — used by app.py for range defaults)
 # ---------------------------------------------------------------------------
+
 
 def convert_x(
     x_native: np.ndarray,
@@ -71,7 +87,9 @@ def convert_x(
     u = src_unit.lower()
 
     # Determine native unit class
-    if nt == "ramanshift" or (not nt and ("raman" in src_dim.lower() or "shift" in src_dim.lower())):
+    if nt == "ramanshift" or (
+        not nt and ("raman" in src_dim.lower() or "shift" in src_dim.lower())
+    ):
         native_class = "raman"
     elif nt == "nanometer" or (not nt and ("wavelength" in src_dim.lower() or "nm" in u)):
         native_class = "nm"
@@ -141,7 +159,9 @@ def convert_x_to_native(
     # nm -> native (same native-class detection as convert_x)
     nt = native_type.lower().replace("_", "").replace(" ", "")
     u = src_unit.lower()
-    if nt == "ramanshift" or (not nt and ("raman" in src_dim.lower() or "shift" in src_dim.lower())):
+    if nt == "ramanshift" or (
+        not nt and ("raman" in src_dim.lower() or "shift" in src_dim.lower())
+    ):
         if laser_nm is None:
             raise ValueError("laser_nm is required for Raman shift conversion")
         return (1.0 / laser_nm - 1.0 / x_nm) * 1e7
@@ -155,6 +175,7 @@ def convert_x_to_native(
 # ---------------------------------------------------------------------------
 # Axis helpers
 # ---------------------------------------------------------------------------
+
 
 def _top_unit(bottom_unit: str) -> str:
     """Secondary (top) axis: energy unless bottom IS energy → wavelength."""
@@ -192,11 +213,11 @@ def _top_axis_config(
     if top_unit == "energy":
         e_lo, e_hi = 1239.84 / nm_hi, 1239.84 / nm_lo
         # wavelength bottom → energy decreases as x increases → invert top axis
-        inverse = (bottom_unit == "wavelength")
+        inverse = bottom_unit == "wavelength"
         return {"min": round(e_lo, 3), "max": round(e_hi, 3), "inverse": inverse}
     else:  # wavelength
         # energy bottom → nm decreases as x increases → invert top axis
-        inverse = (bottom_unit == "energy")
+        inverse = bottom_unit == "energy"
         return {"min": round(nm_lo, 1), "max": round(nm_hi, 1), "inverse": inverse}
 
 
@@ -258,6 +279,7 @@ def _make_axes(
 # ---------------------------------------------------------------------------
 # Tooltip helpers
 # ---------------------------------------------------------------------------
+
 
 def _tooltip_js_parts(bottom_unit: str) -> tuple[str, str]:
     """Return (x_js, secondary_js) snippets for tooltip JavaScript."""
@@ -422,7 +444,7 @@ def _sample_colorscale(hex_stops: list[str], values: list[float]) -> list[str]:
         r0, g0, b0 = _h2rgb(hex_stops[lo])
         r1, g1, b1 = _h2rgb(hex_stops[hi])
         result.append(
-            f"rgb({int(r0+t*(r1-r0))},{int(g0+t*(g1-g0))},{int(b0+t*(b1-b0))})"
+            f"rgb({int(r0 + t * (r1 - r0))},{int(g0 + t * (g1 - g0))},{int(b0 + t * (b1 - b0))})"
         )
     return result
 
@@ -430,6 +452,7 @@ def _sample_colorscale(hex_stops: list[str], values: list[float]) -> list[str]:
 # ---------------------------------------------------------------------------
 # Progress / comparison charts
 # ---------------------------------------------------------------------------
+
 
 def make_progress_echarts(
     stages: dict[str, xr.DataArray],
@@ -449,29 +472,35 @@ def make_progress_echarts(
         return {}
 
     x_native_ref = next(iter(stages.values())).coords[spectral_dim].values
-    x_disp_ref = convert_x(x_native_ref, spectral_dim, x_unit, laser_nm, src_unit=src_unit, native_type=native_type)
+    x_disp_ref = convert_x(
+        x_native_ref, spectral_dim, x_unit, laser_nm, src_unit=src_unit, native_type=native_type
+    )
     x_primary, x_secondary, y_axis = _make_axes(x_disp_ref, x_unit, laser_nm)
 
     series = []
     for i, (label, da) in enumerate(stages.items()):
         sd = da.dims[-1]
         xv_native = da.coords[sd].values
-        xv_disp = convert_x(xv_native, sd, x_unit, laser_nm, src_unit=src_unit, native_type=native_type)
+        xv_disp = convert_x(
+            xv_native, sd, x_unit, laser_nm, src_unit=src_unit, native_type=native_type
+        )
         non_spectral = [d for d in da.dims if d != sd]
         mean_spec = da.mean(non_spectral) if non_spectral else da
         yv = mean_spec.values
         xv_disp, yv = _downsample_cols(xv_disp, yv)
         color = COLORS[i % len(COLORS)]
-        series.append({
-            "type": "line",
-            "name": label,
-            "color": color,
-            "xAxisIndex": 0,
-            "data": list(zip(xv_disp.tolist(), yv.tolist())),
-            "lineStyle": {"width": 2},
-            "symbol": "none",
-            "sampling": "lttb",
-        })
+        series.append(
+            {
+                "type": "line",
+                "name": label,
+                "color": color,
+                "xAxisIndex": 0,
+                "data": list(zip(xv_disp.tolist(), yv.tolist())),
+                "lineStyle": {"width": 2},
+                "symbol": "none",
+                "sampling": "lttb",
+            }
+        )
 
     return {
         "title": _base_title(title),
@@ -514,29 +543,35 @@ def make_comparison_echarts(
         return {}
 
     x_native_ref = next(iter(finals.values())).coords[spectral_dim].values
-    x_disp_ref = convert_x(x_native_ref, spectral_dim, x_unit, laser_nm, src_unit=src_unit, native_type=native_type)
+    x_disp_ref = convert_x(
+        x_native_ref, spectral_dim, x_unit, laser_nm, src_unit=src_unit, native_type=native_type
+    )
     x_primary, x_secondary, y_axis = _make_axes(x_disp_ref, x_unit, laser_nm)
 
     series = []
     for i, (name, da) in enumerate(finals.items()):
         sd = da.dims[-1]
         xv_native = da.coords[sd].values
-        xv_disp = convert_x(xv_native, sd, x_unit, laser_nm, src_unit=src_unit, native_type=native_type)
+        xv_disp = convert_x(
+            xv_native, sd, x_unit, laser_nm, src_unit=src_unit, native_type=native_type
+        )
         non_spectral = [d for d in da.dims if d != sd]
         mean_spec = da.mean(non_spectral) if non_spectral else da
         yv = mean_spec.values
         xv_disp, yv = _downsample_cols(xv_disp, yv)
         color = MULTI_COLORS[i % len(MULTI_COLORS)]
-        series.append({
-            "type": "line",
-            "name": name,
-            "color": color,
-            "xAxisIndex": 0,
-            "data": list(zip(xv_disp.tolist(), yv.tolist())),
-            "lineStyle": {"width": 2},
-            "symbol": "none",
-            "sampling": "lttb",
-        })
+        series.append(
+            {
+                "type": "line",
+                "name": name,
+                "color": color,
+                "xAxisIndex": 0,
+                "data": list(zip(xv_disp.tolist(), yv.tolist())),
+                "lineStyle": {"width": 2},
+                "symbol": "none",
+                "sampling": "lttb",
+            }
+        )
 
     return {
         "title": _base_title(title),
@@ -565,6 +600,7 @@ def make_comparison_echarts(
 # Final chart (2 modes)
 # ---------------------------------------------------------------------------
 
+
 def make_final_echarts(
     da: xr.DataArray,
     title: str,
@@ -577,7 +613,9 @@ def make_final_echarts(
     """Multi-mode final plot (index, mean_dev)."""
     spectral_dim = da.dims[-1]
     x_native = da.coords[spectral_dim].values
-    x_f = convert_x(x_native, spectral_dim, x_unit, laser_nm, src_unit=src_unit, native_type=native_type)
+    x_f = convert_x(
+        x_native, spectral_dim, x_unit, laser_nm, src_unit=src_unit, native_type=native_type
+    )
 
     x_primary, x_secondary, y_axis = _make_axes(x_f, x_unit, laser_nm)
 
@@ -593,15 +631,17 @@ def make_final_echarts(
             "toolbox": _download_toolbox(),
             "dataZoom": _datazoom(x_unit=x_unit),
             "animation": False,
-            "series": [{
-                "type": "line",
-                "xAxisIndex": 0,
-                "data": list(zip(x_disp.tolist(), y_disp.tolist())),
-                "lineStyle": {"color": COLORS[0], "width": 1.5},
-                "symbol": "none",
-                "sampling": "lttb",
-                "name": "spectrum",
-            }],
+            "series": [
+                {
+                    "type": "line",
+                    "xAxisIndex": 0,
+                    "data": list(zip(x_disp.tolist(), y_disp.tolist())),
+                    "lineStyle": {"color": COLORS[0], "width": 1.5},
+                    "symbol": "none",
+                    "sampling": "lttb",
+                    "name": "spectrum",
+                }
+            ],
         }
 
     # Column (spectral-axis) downsampling first — display only, applies
@@ -651,28 +691,32 @@ def make_final_echarts(
 
     series: list[dict] = []
     for i, sp_i in enumerate(idx_sample):
-        series.append({
-            "type": "line",
-            "xAxisIndex": 0,
-            "data": list(zip(x_s.tolist(), spectra_s[sp_i].tolist())),
-            "lineStyle": {"color": palette[i], "width": 1, "opacity": alpha},
-            "symbol": "none",
-            "sampling": "lttb",
-            # Renders the first chunk immediately and streams the rest —
-            # keeps first paint + scroll/zoom interaction smooth with
-            # hundreds of lines at ~1200 pts each (~960k pts total).
-            "progressive": 2000,
-            "progressiveThreshold": 100000,
-        })
+        series.append(
+            {
+                "type": "line",
+                "xAxisIndex": 0,
+                "data": list(zip(x_s.tolist(), spectra_s[sp_i].tolist())),
+                "lineStyle": {"color": palette[i], "width": 1, "opacity": alpha},
+                "symbol": "none",
+                "sampling": "lttb",
+                # Renders the first chunk immediately and streams the rest —
+                # keeps first paint + scroll/zoom interaction smooth with
+                # hundreds of lines at ~1200 pts each (~960k pts total).
+                "progressive": 2000,
+                "progressiveThreshold": 100000,
+            }
+        )
 
     N = len(series)
-    series.append({
-        "type": "scatter",
-        "xAxisIndex": 0,
-        "symbolSize": 0,
-        "data": [[float(x_s[0]), y_mid, vmin_v], [float(x_s[0]), y_mid, vmax_v]],
-        "silent": True,
-    })
+    series.append(
+        {
+            "type": "scatter",
+            "xAxisIndex": 0,
+            "symbolSize": 0,
+            "data": [[float(x_s[0]), y_mid, vmin_v], [float(x_s[0]), y_mid, vmax_v]],
+            "silent": True,
+        }
+    )
 
     return {
         "title": _base_title(title),
@@ -682,7 +726,8 @@ def make_final_echarts(
         "visualMap": {
             "dimension": 2,
             "seriesIndex": [N],
-            "min": vmin_v, "max": vmax_v,
+            "min": vmin_v,
+            "max": vmax_v,
             "inRange": {"color": vm_colors},
             "orient": "vertical",
             "right": "2%",
@@ -703,6 +748,7 @@ def make_final_echarts(
 # ---------------------------------------------------------------------------
 # NMF decomposition / peak deconvolution charts
 # ---------------------------------------------------------------------------
+
 
 def make_components_echarts(
     components: np.ndarray,
@@ -726,9 +772,13 @@ def make_components_echarts(
         for i, comp in enumerate(components)
     }
     return make_progress_echarts(
-        stages, title,
-        x_unit=x_unit, laser_nm=laser_nm, src_unit=src_unit,
-        native_type=native_type, x_range=x_range,
+        stages,
+        title,
+        x_unit=x_unit,
+        laser_nm=laser_nm,
+        src_unit=src_unit,
+        native_type=native_type,
+        x_range=x_range,
     )
 
 
@@ -748,12 +798,12 @@ def make_nmf_diagnostic_echarts(
     converged = diag["converged"]
 
     err_data = [
-        {"value": [k, e], "symbol": "circle" if c else "emptyCircle",
-         "symbolSize": 8 if c else 12}
+        {"value": [k, e], "symbol": "circle" if c else "emptyCircle", "symbolSize": 8 if c else 12}
         for k, e, c in zip(k_values, err, converged)
     ]
-    frac_data = [{"value": [k, f], "symbol": "circle", "symbolSize": 8}
-                 for k, f in zip(k_values, frac)]
+    frac_data = [
+        {"value": [k, f], "symbol": "circle", "symbolSize": 8} for k, f in zip(k_values, frac)
+    ]
 
     x_axis = {
         "type": "value",
@@ -762,7 +812,8 @@ def make_nmf_diagnostic_echarts(
         "nameGap": 35,
         "nameTextStyle": {"fontSize": FS_AXIS},
         "axisLabel": {"fontSize": FS_TICK},
-        "min": min(k_values), "max": max(k_values),
+        "min": min(k_values),
+        "max": max(k_values),
         "minInterval": 1,
         "splitLine": {"lineStyle": {"color": "#e0e0e0"}},
     }
@@ -783,7 +834,8 @@ def make_nmf_diagnostic_echarts(
         "nameTextStyle": {"fontSize": FS_AXIS, "color": COLORS[1]},
         "axisLabel": {"fontSize": FS_TICK, "color": COLORS[1]},
         "splitLine": {"show": False},
-        "min": 0, "max": 1,
+        "min": 0,
+        "max": 1,
     }
 
     tooltip_js = """function(params) {
@@ -802,22 +854,28 @@ def make_nmf_diagnostic_echarts(
         "xAxis": [x_axis],
         "yAxis": [y_err, y_frac],
         "legend": {
-            "type": "scroll", "orient": "horizontal", "bottom": 55,
+            "type": "scroll",
+            "orient": "horizontal",
+            "bottom": 55,
             "textStyle": {"fontSize": FS_LEGEND},
         },
         "tooltip": {"trigger": "axis", "formatter": JsCode(tooltip_js)},
         "toolbox": _download_toolbox(),
         "series": [
             {
-                "type": "line", "name": "reconstruction error",
-                "xAxisIndex": 0, "yAxisIndex": 0,
+                "type": "line",
+                "name": "reconstruction error",
+                "xAxisIndex": 0,
+                "yAxisIndex": 0,
                 "data": err_data,
                 "lineStyle": {"color": COLORS[0], "width": 2},
                 "itemStyle": {"color": COLORS[0]},
             },
             {
-                "type": "line", "name": "variance-explained proxy",
-                "xAxisIndex": 0, "yAxisIndex": 1,
+                "type": "line",
+                "name": "variance-explained proxy",
+                "xAxisIndex": 0,
+                "yAxisIndex": 1,
                 "data": frac_data,
                 "lineStyle": {"color": COLORS[1], "width": 2},
                 "itemStyle": {"color": COLORS[1]},
@@ -867,7 +925,8 @@ def make_mcr_scree_echarts(
         "nameTextStyle": {"fontSize": FS_AXIS, "color": COLORS[1]},
         "axisLabel": {"fontSize": FS_TICK, "color": COLORS[1]},
         "splitLine": {"show": False},
-        "min": 0, "max": 1,
+        "min": 0,
+        "max": 1,
     }
 
     tooltip_js = """function(params) {
@@ -885,21 +944,27 @@ def make_mcr_scree_echarts(
         "xAxis": [x_axis],
         "yAxis": [y_sval, y_cum],
         "legend": {
-            "type": "scroll", "orient": "horizontal", "bottom": 55,
+            "type": "scroll",
+            "orient": "horizontal",
+            "bottom": 55,
             "textStyle": {"fontSize": FS_LEGEND},
         },
         "tooltip": {"trigger": "axis", "formatter": JsCode(tooltip_js)},
         "toolbox": _download_toolbox(),
         "series": [
             {
-                "type": "bar", "name": "singular value",
-                "xAxisIndex": 0, "yAxisIndex": 0,
+                "type": "bar",
+                "name": "singular value",
+                "xAxisIndex": 0,
+                "yAxisIndex": 0,
                 "data": svals,
                 "itemStyle": {"color": COLORS[0]},
             },
             {
-                "type": "line", "name": "cumulative variance",
-                "xAxisIndex": 0, "yAxisIndex": 1,
+                "type": "line",
+                "name": "cumulative variance",
+                "xAxisIndex": 0,
+                "yAxisIndex": 1,
                 "data": cum,
                 "lineStyle": {"color": COLORS[1], "width": 2},
                 "itemStyle": {"color": COLORS[1]},
@@ -926,10 +991,12 @@ def make_mcr_ambiguity_echarts(
     idx = list(range(1, len(f_range) + 1))
 
     data = [
-        {"value": (0.0 if r != r else float(r)),  # NaN -> 0 for display
-         "fmin": (None if fm != fm else float(fm)),
-         "fmax": (None if fx != fx else float(fx)),
-         "src": s}
+        {
+            "value": (0.0 if r != r else float(r)),  # NaN -> 0 for display
+            "fmin": (None if fm != fm else float(fm)),
+            "fmax": (None if fx != fx else float(fx)),
+            "src": s,
+        }
         for r, fm, fx, s in zip(f_range, f_min, f_max, source)
     ]
 
@@ -948,14 +1015,19 @@ def make_mcr_ambiguity_echarts(
         "title": _base_title(title),
         "grid": _base_grid(right=40),
         "xAxis": {
-            "type": "category", "data": idx,
-            "name": "component #", "nameLocation": "middle", "nameGap": 35,
+            "type": "category",
+            "data": idx,
+            "name": "component #",
+            "nameLocation": "middle",
+            "nameGap": 35,
             "nameTextStyle": {"fontSize": FS_AXIS},
             "axisLabel": {"fontSize": FS_TICK},
         },
         "yAxis": {
-            "type": "value", "name": "f_max − f_min",
-            "nameLocation": "middle", "nameGap": 60,
+            "type": "value",
+            "name": "f_max − f_min",
+            "nameLocation": "middle",
+            "nameGap": 60,
             "nameTextStyle": {"fontSize": FS_AXIS},
             "axisLabel": {"fontSize": FS_TICK},
             "splitLine": {"lineStyle": {"color": "#e0e0e0"}},
@@ -965,7 +1037,8 @@ def make_mcr_ambiguity_echarts(
         "toolbox": _download_toolbox(),
         "series": [
             {
-                "type": "bar", "name": "ambiguity",
+                "type": "bar",
+                "name": "ambiguity",
                 "data": data,
                 "itemStyle": {"color": COLORS[2]},
             },
@@ -991,8 +1064,12 @@ def make_deconv_fit_echarts(
     ``fit_result`` is a :class:`peak_fitter.FitResult`.
     """
     x_disp = convert_x(
-        fit_result.x, spectral_dim, x_unit, laser_nm,
-        src_unit=src_unit, native_type=native_type,
+        fit_result.x,
+        spectral_dim,
+        x_unit,
+        laser_nm,
+        src_unit=src_unit,
+        native_type=native_type,
     )
     x_primary, x_secondary, y_axis = _make_axes(x_disp, x_unit, laser_nm)
 
@@ -1009,22 +1086,28 @@ def make_deconv_fit_echarts(
     x_list = x_disp.tolist()
     series = [
         {
-            "type": "line", "name": "data",
-            "xAxisIndex": 0, "yAxisIndex": 0,
+            "type": "line",
+            "name": "data",
+            "xAxisIndex": 0,
+            "yAxisIndex": 0,
             "data": list(zip(x_list, fit_result.y_data.tolist())),
             "lineStyle": {"color": "#888888", "width": 1.5},
             "symbol": "none",
         },
         {
-            "type": "line", "name": "total fit",
-            "xAxisIndex": 0, "yAxisIndex": 0,
+            "type": "line",
+            "name": "total fit",
+            "xAxisIndex": 0,
+            "yAxisIndex": 0,
             "data": list(zip(x_list, fit_result.y_fit.tolist())),
             "lineStyle": {"color": COLORS[0], "width": 2.5},
             "symbol": "none",
         },
         {
-            "type": "line", "name": "residual",
-            "xAxisIndex": 0, "yAxisIndex": 1,
+            "type": "line",
+            "name": "residual",
+            "xAxisIndex": 0,
+            "yAxisIndex": 1,
             "data": list(zip(x_list, fit_result.residual.tolist())),
             "lineStyle": {"color": "#aaaaaa", "width": 1, "type": "dotted"},
             "symbol": "none",
@@ -1032,13 +1115,17 @@ def make_deconv_fit_echarts(
     ]
     for i, band in enumerate(fit_result.bands):
         color = COLORS[(i + 1) % len(COLORS)]
-        series.append({
-            "type": "line", "name": band.label,
-            "xAxisIndex": 0, "yAxisIndex": 0,
-            "data": list(zip(x_list, band.curve.tolist())),
-            "lineStyle": {"color": color, "width": 2, "type": "dashed"},
-            "symbol": "none",
-        })
+        series.append(
+            {
+                "type": "line",
+                "name": band.label,
+                "xAxisIndex": 0,
+                "yAxisIndex": 0,
+                "data": list(zip(x_list, band.curve.tolist())),
+                "lineStyle": {"color": color, "width": 2, "type": "dashed"},
+                "symbol": "none",
+            }
+        )
 
     return {
         "title": _base_title(title),
@@ -1046,7 +1133,9 @@ def make_deconv_fit_echarts(
         "xAxis": [x_primary, x_secondary],
         "yAxis": [y_axis, y_residual],
         "legend": {
-            "type": "scroll", "orient": "horizontal", "bottom": 55,
+            "type": "scroll",
+            "orient": "horizontal",
+            "bottom": 55,
             "textStyle": {"fontSize": FS_LEGEND},
         },
         "tooltip": _tooltip_with_ev(x_unit),
@@ -1073,26 +1162,39 @@ def make_deconv_preview_echarts(
     helpers make_deconv_fit_echarts uses.
     """
     x_disp = convert_x(
-        x_native, spectral_dim, x_unit, laser_nm,
-        src_unit=src_unit, native_type=native_type,
+        x_native,
+        spectral_dim,
+        x_unit,
+        laser_nm,
+        src_unit=src_unit,
+        native_type=native_type,
     )
     x_primary, x_secondary, y_axis = _make_axes(x_disp, x_unit, laser_nm)
 
-    series: list[dict] = [{
-        "type": "line", "name": "data",
-        "xAxisIndex": 0, "yAxisIndex": 0,
-        "data": list(zip(x_disp.tolist(), y.tolist())),
-        "lineStyle": {"color": "#888888", "width": 1.5},
-        "symbol": "none",
-    }]
+    series: list[dict] = [
+        {
+            "type": "line",
+            "name": "data",
+            "xAxisIndex": 0,
+            "yAxisIndex": 0,
+            "data": list(zip(x_disp.tolist(), y.tolist())),
+            "lineStyle": {"color": "#888888", "width": 1.5},
+            "symbol": "none",
+        }
+    ]
 
     if band_centers_native:
         centers_disp = convert_x(
-            np.asarray(band_centers_native, dtype=float), spectral_dim, x_unit, laser_nm,
-            src_unit=src_unit, native_type=native_type,
+            np.asarray(band_centers_native, dtype=float),
+            spectral_dim,
+            x_unit,
+            laser_nm,
+            src_unit=src_unit,
+            native_type=native_type,
         )
         series[0]["markLine"] = {
-            "silent": True, "symbol": "none",
+            "silent": True,
+            "symbol": "none",
             "lineStyle": {"color": COLORS[0], "type": "dashed", "width": 1.5},
             "label": {"show": False},
             "data": [{"xAxis": float(c)} for c in centers_disp],

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Preprocessing page — pipeline parameter controls + staged/final charts.
 
 Layout
@@ -59,6 +58,7 @@ import streamlit as st
 from streamlit_echarts import st_echarts
 
 from backend._shared.dataset import SpectralDataset
+
 from ..charts import convert_x, make_comparison_echarts, make_final_echarts, make_progress_echarts
 from ..controls import (
     CRR_ENGINE_1D,
@@ -92,7 +92,6 @@ from ..exclusion import (
 from ..map_chart import make_selection_map_fig
 from ..pipeline_cache import final_da, get_finals, stage_dict
 
-
 # ─────────────────────────── Widget state restore ──────────────────────────
 
 
@@ -112,15 +111,18 @@ def _restore_widget_state() -> None:
     # ── Normalization ─────────────────────────────────────────────────────
     if "norm_selection" not in ss:
         sel: list[str] = []
-        if stored.get("norm1_enabled"): sel.append("Before")
-        if stored.get("norm2_enabled"): sel.append("After CRR")
-        if stored.get("norm3_enabled"): sel.append("After Denoising")
+        if stored.get("norm1_enabled"):
+            sel.append("Before")
+        if stored.get("norm2_enabled"):
+            sel.append("After CRR")
+        if stored.get("norm3_enabled"):
+            sel.append("After Denoising")
         ss["norm_selection"] = sel
 
     if "norm_method" not in ss:
-        method = (
-            stored.get("norm1") or stored.get("norm2") or stored.get("norm3") or {}
-        ).get("method")
+        method = (stored.get("norm1") or stored.get("norm2") or stored.get("norm3") or {}).get(
+            "method"
+        )
         if method:
             ss["norm_method"] = method
 
@@ -137,17 +139,15 @@ def _restore_widget_state() -> None:
     crr = stored.get("crr") or {}
     if crr:
         if "crr_engine_mode" not in ss:
-            ss["crr_engine_mode"] = (
-                CRR_ENGINE_1D if crr.get("force_1d", True) else CRR_ENGINE_2D3D
-            )
+            ss["crr_engine_mode"] = CRR_ENGINE_1D if crr.get("force_1d", True) else CRR_ENGINE_2D3D
         for wkey, pkey in (
-            ("crr_spike_width",      "spike_width"),
-            ("crr_spike_threshold",  "spike_threshold"),
-            ("crr_spike_passes",     "spike_passes"),
-            ("crr_map_sensitivity",  "map_sensitivity"),
-            ("crr_map_disk_radius",  "map_disk_radius"),
-            ("crr_map_spike_width",  "map_spike_width"),
-            ("crr_map_method",       "map_method"),
+            ("crr_spike_width", "spike_width"),
+            ("crr_spike_threshold", "spike_threshold"),
+            ("crr_spike_passes", "spike_passes"),
+            ("crr_map_sensitivity", "map_sensitivity"),
+            ("crr_map_disk_radius", "map_disk_radius"),
+            ("crr_map_spike_width", "map_spike_width"),
+            ("crr_map_method", "map_method"),
             ("crr_map_n_components", "map_n_components"),
         ):
             if wkey not in ss and pkey in crr:
@@ -160,12 +160,11 @@ def _restore_widget_state() -> None:
     if den:
         if "denoise_engine" not in ss:
             ss["denoise_engine"] = (
-                DENOISE_ENGINE_SMOOTHER if den.get("per_spectrum")
-                else DENOISE_ENGINE_PCA
+                DENOISE_ENGINE_SMOOTHER if den.get("per_spectrum") else DENOISE_ENGINE_PCA
             )
         for wkey, pkey in (
-            ("denoise_nc_type",  "n_components_type"),
-            ("denoise_nc_int",   "n_components_int"),
+            ("denoise_nc_type", "n_components_type"),
+            ("denoise_nc_int", "n_components_int"),
             ("denoise_nc_float", "n_components_float"),
         ):
             if wkey not in ss and pkey in den:
@@ -178,11 +177,11 @@ def _restore_widget_state() -> None:
             if "denoise_sm_method" not in ss:
                 ss["denoise_sm_method"] = sm.get("method", "savgol")
             for wkey, pkey in (
-                ("denoise_sm_window_length",   "window_length"),
-                ("denoise_sm_polyorder",       "polyorder"),
-                ("denoise_sm_d",               "d"),
-                ("denoise_sm_auto_lam_calls",  "auto_lam_calls"),
-                ("denoise_sm_wavelet",         "wavelet"),
+                ("denoise_sm_window_length", "window_length"),
+                ("denoise_sm_polyorder", "polyorder"),
+                ("denoise_sm_d", "d"),
+                ("denoise_sm_auto_lam_calls", "auto_lam_calls"),
+                ("denoise_sm_wavelet", "wavelet"),
                 ("denoise_sm_wavelet_threshold", "wavelet_threshold"),
             ):
                 if wkey not in ss and sm.get(pkey) is not None:
@@ -223,9 +222,7 @@ def _apply_preset(mode: str) -> None:
     ss["crr_enabled"] = True
     ss["denoise_enabled"] = True
     ss["crr_engine_mode"] = CRR_ENGINE_1D if mode == "1d" else CRR_ENGINE_2D3D
-    ss["denoise_engine"] = (
-        DENOISE_ENGINE_SMOOTHER if mode == "1d" else DENOISE_ENGINE_PCA
-    )
+    ss["denoise_engine"] = DENOISE_ENGINE_SMOOTHER if mode == "1d" else DENOISE_ENGINE_PCA
 
 
 # ─────────────────────────── Left column: cards ────────────────────────────
@@ -237,7 +234,8 @@ def _render_quick_setup(processing_ok: bool) -> None:
         col_1d, col_3d = st.columns(2)
         col_1d.button(
             "1D preprocessing",
-            on_click=_apply_preset, args=("1d",),
+            on_click=_apply_preset,
+            args=("1d",),
             disabled=not processing_ok,
             width="stretch",
             help=(
@@ -248,7 +246,8 @@ def _render_quick_setup(processing_ok: bool) -> None:
         )
         col_3d.button(
             "3D preprocessing",
-            on_click=_apply_preset, args=("3d",),
+            on_click=_apply_preset,
+            args=("3d",),
             disabled=not processing_ok,
             width="stretch",
             help=(
@@ -271,10 +270,7 @@ def _render_normalization_card() -> tuple[list[str], str | None]:
             key="norm_selection",
             on_change=_cascade_norm_selection,
             label_visibility="collapsed",
-            help=(
-                "Selecting a later checkpoint automatically selects the "
-                "earlier ones."
-            ),
+            help=("Selecting a later checkpoint automatically selects the earlier ones."),
         )
         norm_method: str | None = None
         if norm_selection:
@@ -335,41 +331,61 @@ def _render_exclusion_tab(loaded: dict[str, Any]) -> Any:
     # `or "Exclude"`: a single-select segmented control returns None when the
     # user clicks the already-active segment (deselect), and there is no
     # meaningful "no mode" state here.
-    mode = st.segmented_control(
-        "Mode", ["Exclude", "Restore"], key="excl_mode", default="Exclude",
-        help="Applies to both the typed indices below and the interactive map.",
-    ) or "Exclude"
+    mode = (
+        st.segmented_control(
+            "Mode",
+            ["Exclude", "Restore"],
+            key="excl_mode",
+            default="Exclude",
+            help="Applies to both the typed indices below and the interactive map.",
+        )
+        or "Exclude"
+    )
     exclude = mode != "Restore"
 
     if is_map:
         n_row, n_col = shape
         rows_txt = st.text_input(
-            "Rows", key="excl_rows", placeholder="e.g. 1-3, 48",
+            "Rows",
+            key="excl_rows",
+            placeholder="e.g. 1-3, 48",
             help=f"Whole map rows to {mode.lower()}. Valid: {display_range(n_row)}.",
         )
         cols_txt = st.text_input(
-            "Columns", key="excl_cols", placeholder="e.g. 13, 31-34",
+            "Columns",
+            key="excl_cols",
+            placeholder="e.g. 13, 31-34",
             help=f"Whole map columns to {mode.lower()}. Valid: {display_range(n_col)}.",
         )
         pixels_txt = st.text_input(
-            "Pixels (row, column)", key="excl_pixels", placeholder="e.g. (5,8), (10,3)",
+            "Pixels (row, column)",
+            key="excl_pixels",
+            placeholder="e.g. (5,8), (10,3)",
         )
         flat_txt = ""
     else:
         n_row, n_col = shape[0], 1
         rows_txt = cols_txt = pixels_txt = ""
         flat_txt = st.text_input(
-            "Spectra", key="excl_flat", placeholder="e.g. 1-4, 8, 11-13",
+            "Spectra",
+            key="excl_flat",
+            placeholder="e.g. 1-4, 8, 11-13",
             help=f"Spectrum indices to {mode.lower()}. Valid: {display_range(shape[0])}.",
         )
 
     col_apply, col_undo, col_clear = st.columns([2, 1, 1])
     apply_clicked = col_apply.button(mode, key="excl_apply", width="stretch")
     undo_clicked = col_undo.button(
-        "Undo", key="excl_undo", width="stretch", disabled=not has_undo(),
+        "Undo",
+        key="excl_undo",
+        width="stretch",
+        disabled=not has_undo(),
     )
     clear_clicked = col_clear.button(
-        "Clear", key="excl_clear", width="stretch", disabled=not mask.any(),
+        "Clear",
+        key="excl_clear",
+        width="stretch",
+        disabled=not mask.any(),
         help="Restore every spectrum of this file.",
     )
 
@@ -383,9 +399,17 @@ def _render_exclusion_tab(loaded: dict[str, Any]) -> Any:
             st.error(str(exc))
         else:
             if rows or cols or pixels or flat:
-                set_mask(fname, apply_selection(
-                    mask, rows=rows, cols=cols, pixels=pixels, flat=flat, exclude=exclude,
-                ))
+                set_mask(
+                    fname,
+                    apply_selection(
+                        mask,
+                        rows=rows,
+                        cols=cols,
+                        pixels=pixels,
+                        flat=flat,
+                        exclude=exclude,
+                    ),
+                )
                 st.rerun()
             else:
                 st.warning("Nothing to apply — fill in at least one field.")
@@ -410,10 +434,7 @@ def _render_stage_tabs(
     empty container inside its tab (None when that step is off) that the page
     fills with a removal grid after the pipeline has run.
     """
-    _pl_info = (
-        "Requires PL data (Nanometer or ElectronVolt). "
-        "Not available for this upload."
-    )
+    _pl_info = "Requires PL data (Nanometer or ElectronVolt). Not available for this upload."
     cd_visual_slot = None
 
     with st.container(border=True):
@@ -480,32 +501,37 @@ def _render_stage_tabs(
             excl_visual_slot = _render_exclusion_tab(loaded)
 
     stage_params = {
-        "cd_enabled":      cd_enabled,      "cd":      cd_params,
-        "crr_enabled":     crr_enabled,     "crr":     crr_params,
-        "denoise_enabled": denoise_enabled, "denoise": denoise_params,
+        "cd_enabled": cd_enabled,
+        "cd": cd_params,
+        "crr_enabled": crr_enabled,
+        "crr": crr_params,
+        "denoise_enabled": denoise_enabled,
+        "denoise": denoise_params,
     }
     return stage_params, cd_visual_slot, excl_visual_slot
 
 
 def _render_preprocessing_params(
-    processing_ok: bool, loaded: dict,
+    processing_ok: bool,
+    loaded: dict,
 ) -> tuple[dict[str, Any], Any, Any]:
     """Render the left-column cards; return (pipeline_params, cd_slot, excl_slot)."""
     _render_quick_setup(processing_ok)
     norm_selection, norm_method = _render_normalization_card()
-    stage_params, cd_visual_slot, excl_visual_slot = _render_stage_tabs(
-        processing_ok, loaded
-    )
+    stage_params, cd_visual_slot, excl_visual_slot = _render_stage_tabs(processing_ok, loaded)
 
     _nm = {"method": norm_method} if norm_method else {}
     pipeline_params = {
-        "norm1_enabled": "Before" in norm_selection,          "norm1": _nm,
-        "norm2_enabled": "After CRR" in norm_selection,       "norm2": _nm,
-        "norm3_enabled": "After Denoising" in norm_selection, "norm3": _nm,
+        "norm1_enabled": "Before" in norm_selection,
+        "norm1": _nm,
+        "norm2_enabled": "After CRR" in norm_selection,
+        "norm2": _nm,
+        "norm3_enabled": "After Denoising" in norm_selection,
+        "norm3": _nm,
         **stage_params,
         # Read from sl_excluded, which the Exclude tab and the Selection chart
         # have already updated by this point in the rerun.
-        "excl":       build_excl_params(loaded),
+        "excl": build_excl_params(loaded),
     }
     return pipeline_params, cd_visual_slot, excl_visual_slot
 
@@ -513,13 +539,13 @@ def _render_preprocessing_params(
 # ───────────────────── Clean Data removed-spectra visual ───────────────────
 
 
-_CD_KEPT_RGB     = np.array([232, 234, 237], dtype=np.uint8)  # 0 — light grey, kept
-_CD_REMOVED_RGB  = np.array([217,  48,  37], dtype=np.uint8)  # 1 — red, auto-removed
-_CD_EXCLUDED_RGB = np.array([245, 158,  11], dtype=np.uint8)  # 2 — orange, user-excluded
+_CD_KEPT_RGB = np.array([232, 234, 237], dtype=np.uint8)  # 0 — light grey, kept
+_CD_REMOVED_RGB = np.array([217, 48, 37], dtype=np.uint8)  # 1 — red, auto-removed
+_CD_EXCLUDED_RGB = np.array([245, 158, 11], dtype=np.uint8)  # 2 — orange, user-excluded
 _CD_PALETTE = np.stack([_CD_KEPT_RGB, _CD_REMOVED_RGB, _CD_EXCLUDED_RGB])
-_CD_GRID_MAX_PX = 360   # target image width in px
-_CD_WRAP_COLS   = 50    # line scans wrap into rows this wide
-_CD_MAX_LISTED  = 12    # list removed indices explicitly up to this many
+_CD_GRID_MAX_PX = 360  # target image width in px
+_CD_WRAP_COLS = 50  # line scans wrap into rows this wide
+_CD_MAX_LISTED = 12  # list removed indices explicitly up to this many
 
 
 def _cd_removed_mask(da, spectral_dim: str) -> np.ndarray:
@@ -557,8 +583,8 @@ def _removal_grid_rgb(categories: np.ndarray, valid: np.ndarray | None = None) -
     cell = int(np.clip(_CD_GRID_MAX_PX // max(nx, 1), 2, 14))
     img = np.kron(rgb, np.ones((cell, cell, 1), dtype=np.uint8))
     if cell >= 4:
-        img[cell - 1::cell, :, :] = 255
-        img[:, cell - 1::cell, :] = 255
+        img[cell - 1 :: cell, :, :] = 255
+        img[:, cell - 1 :: cell, :] = 255
     return img
 
 
@@ -593,7 +619,8 @@ def _render_cd_removed_visual(slot, all_datasets: dict, loaded: dict[str, Any]) 
                 treated = "Oversaturation Check" in (da.attrs.get("treatments") or {})
                 st.caption(
                     f"{label}oversaturated spectrum detected — warning only, "
-                    "single spectra are not removed." if treated
+                    "single spectra are not removed."
+                    if treated
                     else f"{label}no oversaturated spectra detected."
                 )
                 continue
@@ -624,9 +651,7 @@ def _render_cd_removed_visual(slot, all_datasets: dict, loaded: dict[str, Any]) 
                 )
 
 
-def _excl_categories(
-    user_mask: np.ndarray, final_nan: np.ndarray
-) -> np.ndarray:
+def _excl_categories(user_mask: np.ndarray, final_nan: np.ndarray) -> np.ndarray:
     """Category grid for the exclusion readout: 0 kept, 1 auto-removed, 2 excluded.
 
     ``final_nan`` is every all-NaN spectrum in the final result, which is the
@@ -662,7 +687,7 @@ def _render_excl_visual(slot, all_datasets: dict, loaded: dict[str, Any]) -> Non
             grid, valid = _wrap_line_mask(cat.astype(bool))
             # _wrap_line_mask pads a bool mask; re-pad the categories the same way.
             padded = np.zeros(grid.size, dtype=np.uint8)
-            padded[:cat.size] = cat
+            padded[: cat.size] = cat
             st.image(_removal_grid_rgb(padded.reshape(grid.shape), valid))
             st.caption("Index runs left→right, top→bottom.")
         else:
@@ -699,8 +724,13 @@ def _make_final_echarts_cached(
     native_type: str,
 ) -> dict:
     return make_final_echarts(
-        _da, title=title, color_by=color_by,
-        x_unit=x_unit, laser_nm=laser_nm, src_unit=src_unit, native_type=native_type,
+        _da,
+        title=title,
+        color_by=color_by,
+        x_unit=x_unit,
+        laser_nm=laser_nm,
+        src_unit=src_unit,
+        native_type=native_type,
     )
 
 
@@ -716,8 +746,11 @@ def _render_progress_tab(
 
     x_native = ref_ds.da.coords[ref_ds.spectral_dim].values
     x_disp = convert_x(
-        x_native, ref_ds.spectral_dim, current_unit,
-        ref_ds.laser_nm, src_unit=ref_ds.spectral_unit,
+        x_native,
+        ref_ds.spectral_dim,
+        current_unit,
+        ref_ds.laser_nm,
+        src_unit=ref_ds.spectral_unit,
         native_type=ref_ds.spectral_units,
     )
     disp_min = float(x_disp.min())
@@ -727,7 +760,8 @@ def _render_progress_tab(
 
     with col_unit:
         x_unit = st.selectbox(
-            "Spectral units", X_UNIT_OPTIONS,
+            "Spectral units",
+            X_UNIT_OPTIONS,
             format_func=X_UNIT_FMT.get,
             index=X_UNIT_OPTIONS.index(current_unit),
             key="prog_x_unit",
@@ -737,21 +771,30 @@ def _render_progress_tab(
         _x_step = 0.01 if x_unit == "energy" else 1.0
         _x_fmt = "%.2f" if x_unit == "energy" else "%.0f"
         x_from = st.number_input(
-            "From", value=min(disp_min, disp_max),
-            key=f"prog_from_{x_unit}", format=_x_fmt, step=_x_step,
+            "From",
+            value=min(disp_min, disp_max),
+            key=f"prog_from_{x_unit}",
+            format=_x_fmt,
+            step=_x_step,
         )
 
     with col_to:
         x_to = st.number_input(
-            "To", value=max(disp_min, disp_max),
-            key=f"prog_to_{x_unit}", format=_x_fmt, step=_x_step,
+            "To",
+            value=max(disp_min, disp_max),
+            key=f"prog_to_{x_unit}",
+            format=_x_fmt,
+            step=_x_step,
         )
 
     laser = ref_ds.laser_nm
     with col_laser:
         if x_unit == "raman_shift" and laser is None:
             laser = st.number_input(
-                "Laser (nm)", value=532.0, min_value=1.0, step=0.1,
+                "Laser (nm)",
+                value=532.0,
+                min_value=1.0,
+                step=0.1,
                 key="prog_laser_nm",
                 help="Not found in file — enter the excitation wavelength.",
             )
@@ -765,28 +808,34 @@ def _render_progress_tab(
     if multi:
         finals = {name: final_da(ds) for name, ds in all_datasets.items()}
         opts = make_comparison_echarts(
-            finals, title=chart_title,
-            x_unit=x_unit, laser_nm=laser,
-            src_unit=ref_ds.spectral_unit, native_type=ref_ds.spectral_units,
+            finals,
+            title=chart_title,
+            x_unit=x_unit,
+            laser_nm=laser,
+            src_unit=ref_ds.spectral_unit,
+            native_type=ref_ds.spectral_units,
             x_range=x_range,
         )
     else:
         name = next(iter(all_datasets))
         opts = make_progress_echarts(
-            stage_dict(all_datasets[name]), title=chart_title,
-            x_unit=x_unit, laser_nm=laser,
-            src_unit=ref_ds.spectral_unit, native_type=ref_ds.spectral_units,
+            stage_dict(all_datasets[name]),
+            title=chart_title,
+            x_unit=x_unit,
+            laser_nm=laser,
+            src_unit=ref_ds.spectral_unit,
+            native_type=ref_ds.spectral_units,
             x_range=x_range,
         )
 
     st_echarts(opts, height="72vh", key="progress_chart")
 
 
-_BROWSE_ALL  = "All spectra"
-_BROWSE_ONE  = "Single spectrum"
-_BROWSE_ROW  = "Row"
-_BROWSE_COL  = "Column"
-_BROWSE_MODES_MAP  = [_BROWSE_ALL, _BROWSE_ONE, _BROWSE_ROW, _BROWSE_COL]
+_BROWSE_ALL = "All spectra"
+_BROWSE_ONE = "Single spectrum"
+_BROWSE_ROW = "Row"
+_BROWSE_COL = "Column"
+_BROWSE_MODES_MAP = [_BROWSE_ALL, _BROWSE_ONE, _BROWSE_ROW, _BROWSE_COL]
 _BROWSE_MODES_LINE = [_BROWSE_ALL, _BROWSE_ONE]
 
 
@@ -804,19 +853,23 @@ def _clamp_index_state(key: str, n: int) -> None:
     if key not in st.session_state:
         return
     try:
-        st.session_state[key] = int(np.clip(
-            int(st.session_state[key]), DISPLAY_BASE, max(n - 1 + DISPLAY_BASE, DISPLAY_BASE)
-        ))
+        st.session_state[key] = int(
+            np.clip(
+                int(st.session_state[key]), DISPLAY_BASE, max(n - 1 + DISPLAY_BASE, DISPLAY_BASE)
+            )
+        )
     except (TypeError, ValueError):
         del st.session_state[key]
 
 
 def _step_index(key: str, delta: int, n: int) -> None:
-    st.session_state[key] = int(np.clip(
-        int(st.session_state.get(key, DISPLAY_BASE)) + delta,
-        DISPLAY_BASE,
-        max(n - 1 + DISPLAY_BASE, DISPLAY_BASE),
-    ))
+    st.session_state[key] = int(
+        np.clip(
+            int(st.session_state.get(key, DISPLAY_BASE)) + delta,
+            DISPLAY_BASE,
+            max(n - 1 + DISPLAY_BASE, DISPLAY_BASE),
+        )
+    )
 
 
 def _index_stepper(cols, label: str, key: str, n: int) -> int:
@@ -834,15 +887,27 @@ def _index_stepper(cols, label: str, key: str, n: int) -> int:
     cur = int(st.session_state.get(key, lo))
     c_prev, c_val, c_next = cols
     c_prev.button(
-        "◀", key=f"{key}_prev", width="stretch", disabled=cur <= lo,
-        on_click=_step_index, args=(key, -1, n),
+        "◀",
+        key=f"{key}_prev",
+        width="stretch",
+        disabled=cur <= lo,
+        on_click=_step_index,
+        args=(key, -1, n),
     )
     val = c_val.number_input(
-        label, min_value=lo, max_value=hi, step=1, key=key,
+        label,
+        min_value=lo,
+        max_value=hi,
+        step=1,
+        key=key,
     )
     c_next.button(
-        "▶", key=f"{key}_next", width="stretch", disabled=cur >= hi,
-        on_click=_step_index, args=(key, +1, n),
+        "▶",
+        key=f"{key}_next",
+        width="stretch",
+        disabled=cur >= hi,
+        on_click=_step_index,
+        args=(key, +1, n),
     )
     return int(val) - DISPLAY_BASE
 
@@ -863,14 +928,20 @@ def _render_browse_controls(da) -> tuple[Any, str, str]:
     modes = _BROWSE_MODES_MAP if len(spatial) == 2 else _BROWSE_MODES_LINE
     if st.session_state.get("final_browse_mode") not in modes:
         st.session_state.pop("final_browse_mode", None)
-    mode = st.segmented_control(
-        "Show", modes, key="final_browse_mode", default=_BROWSE_ALL,
-        help=(
-            "Step through the map one spectrum at a time, or plot a single "
-            "map row / column. Indices are the same ones the Exclude Spectra "
-            "tab uses."
-        ),
-    ) or _BROWSE_ALL
+    mode = (
+        st.segmented_control(
+            "Show",
+            modes,
+            key="final_browse_mode",
+            default=_BROWSE_ALL,
+            help=(
+                "Step through the map one spectrum at a time, or plot a single "
+                "map row / column. Indices are the same ones the Exclude Spectra "
+                "tab uses."
+            ),
+        )
+        or _BROWSE_ALL
+    )
 
     if mode == _BROWSE_ALL:
         return da, mode, ""
@@ -888,9 +959,10 @@ def _render_browse_controls(da) -> tuple[Any, str, str]:
         r = _index_stepper(cols[:3], "Row", "final_browse_row", n_row)
         c = _index_stepper(cols[3:6], "Column", "final_browse_col", n_col)
         subset = da.isel({spatial[0]: r, spatial[1]: c})
-        return subset, mode, (
-            f"pixel ({to_display(r)}, {to_display(c)}) · "
-            f"flat index {to_display(r * n_col + c)}"
+        return (
+            subset,
+            mode,
+            (f"pixel ({to_display(r)}, {to_display(c)}) · flat index {to_display(r * n_col + c)}"),
         )
 
     if mode == _BROWSE_ROW:
@@ -912,14 +984,18 @@ def _render_final_tab(
 ) -> None:
     if multi:
         view_mode = st.radio(
-            "View", ["Comparison (all files)", "Single file"],
-            horizontal=True, key="final_view_mode",
+            "View",
+            ["Comparison (all files)", "Single file"],
+            horizontal=True,
+            key="final_view_mode",
         )
     else:
         view_mode = "Single file"
 
     if view_mode == "Comparison (all files)":
-        chart_title = st.text_input("Chart title", value="Comparison — all files", key="fin_cmp_title")
+        chart_title = st.text_input(
+            "Chart title", value="Comparison — all files", key="fin_cmp_title"
+        )
         x_unit, laser = render_axis_controls(
             "fin_cmp",
             ref_ds.laser_nm,
@@ -928,11 +1004,15 @@ def _render_final_tab(
         finals = {name: final_da(ds) for name, ds in all_datasets.items()}
         st_echarts(
             make_comparison_echarts(
-                finals, title=chart_title,
-                x_unit=x_unit, laser_nm=laser,
-                src_unit=ref_ds.spectral_unit, native_type=ref_ds.spectral_units,
+                finals,
+                title=chart_title,
+                x_unit=x_unit,
+                laser_nm=laser,
+                src_unit=ref_ds.spectral_unit,
+                native_type=ref_ds.spectral_units,
             ),
-            height="72vh", key="final_comparison",
+            height="72vh",
+            key="final_comparison",
         )
 
     else:
@@ -951,7 +1031,7 @@ def _render_final_tab(
             "Color mode",
             ["index", "mean_dev"],
             format_func=lambda x: {
-                "index":    "Index (spectrum order)",
+                "index": "Index (spectrum order)",
                 "mean_dev": "Mean deviation",
             }[x],
             key="final_color_by",
@@ -980,7 +1060,9 @@ def _render_final_tab(
         # Every spectrum of the selection is all-NaN — Clean Data dropped it or
         # the user excluded it. NaN is not valid JSON, so there is no chart to
         # draw; say which it is instead of rendering an empty axis.
-        n_valid = int(np.sum(~np.all(np.isnan(da_sel.values.reshape(-1, da_sel.shape[-1])), axis=1)))
+        n_valid = int(
+            np.sum(~np.all(np.isnan(da_sel.values.reshape(-1, da_sel.shape[-1])), axis=1))
+        )
         if n_valid == 0:
             st.info(
                 f"Nothing to plot — {browse_label or 'this file'} is entirely "
@@ -990,17 +1072,27 @@ def _render_final_tab(
 
         if browse_mode == _BROWSE_ALL:
             opts = _make_final_echarts_cached(
-                loaded[selected]["hash"], pipeline_params, da_sel, chart_title,
+                loaded[selected]["hash"],
+                pipeline_params,
+                da_sel,
+                chart_title,
                 color_by,
-                x_unit, laser, sel_ds.spectral_unit, sel_ds.spectral_units,
+                x_unit,
+                laser,
+                sel_ds.spectral_unit,
+                sel_ds.spectral_units,
             )
         else:
             # Subsets are one row/column/pixel — cheap enough to build eagerly,
             # and the cache key would need the browse indices folded in.
             opts = make_final_echarts(
-                da_sel, title=f"{chart_title} — {browse_label}", color_by=color_by,
-                x_unit=x_unit, laser_nm=laser,
-                src_unit=sel_ds.spectral_unit, native_type=sel_ds.spectral_units,
+                da_sel,
+                title=f"{chart_title} — {browse_label}",
+                color_by=color_by,
+                x_unit=x_unit,
+                laser_nm=laser,
+                src_unit=sel_ds.spectral_unit,
+                native_type=sel_ds.spectral_units,
             )
             skipped = n_spectra - n_valid
             st.caption(
@@ -1059,7 +1151,9 @@ def _selected_flat_indices(points: list[dict], n_col: int) -> list[int]:
 
 
 def _render_selection_tab(
-    all_datasets: dict, loaded: dict[str, Any], pipeline_params: dict[str, Any],
+    all_datasets: dict,
+    loaded: dict[str, Any],
+    pipeline_params: dict[str, Any],
 ) -> None:
     """Interactive pixel picker — click / box / lasso to exclude or restore."""
     fname = st.session_state.get("excl_file") or next(iter(all_datasets), None)
@@ -1100,13 +1194,24 @@ def _render_selection_tab(
 
     colorscale, map_opacity = render_map_display_controls("excl")
     fig = make_selection_map_fig(
-        z, da_ctx.coords[da_ctx.dims[0]].values, da_ctx.coords[da_ctx.dims[1]].values,
-        ds_meta.image_arr, ds_meta.image_meta, user_mask, auto_mask,
-        colorscale=colorscale, title=fname, map_opacity=map_opacity,
+        z,
+        da_ctx.coords[da_ctx.dims[0]].values,
+        da_ctx.coords[da_ctx.dims[1]].values,
+        ds_meta.image_arr,
+        ds_meta.image_meta,
+        user_mask,
+        auto_mask,
+        colorscale=colorscale,
+        title=fname,
+        map_opacity=map_opacity,
     )
     event = st.plotly_chart(
-        fig, on_select="rerun", selection_mode=("points", "box", "lasso"),
-        key="excl_map", width="stretch", height=600,
+        fig,
+        on_select="rerun",
+        selection_mode=("points", "box", "lasso"),
+        key="excl_map",
+        width="stretch",
+        height=600,
     )
 
     points = ((event or {}).get("selection") or {}).get("points") or []

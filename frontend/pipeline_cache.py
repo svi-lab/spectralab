@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Cached pipeline accessor — single entry point used by every page.
 
 All five pages need the processed DataArray per loaded file. Only the two
@@ -70,13 +69,14 @@ import numpy as np
 import streamlit as st
 import xarray as xr
 
+from backend._shared.dataset import SpectralDataset
 from backend.pipeline import (
     apply_exclusion,
     run_stage_chain,
     stage_cosmic_ray_removal,
     stage_denoise,
 )
-from backend._shared.dataset import SpectralDataset
+
 from .exclusion import mask_digest
 
 # CRR/denoise cache budget. Each retained entry is a full-size array (~150 MB
@@ -112,13 +112,19 @@ _DIGEST_SKIP = frozenset({"excl", "bg", "bg_enabled"})
 def default_pipeline_params() -> dict[str, Any]:
     """All-disabled pipeline params for pages opened before Preprocessing has run."""
     return {
-        "norm1_enabled": False, "norm1": {},
-        "cd_enabled":    False, "cd":    {},
-        "crr_enabled":   False, "crr":   {},
-        "norm2_enabled": False, "norm2": {},
-        "denoise_enabled": False, "denoise": {},
-        "norm3_enabled": False, "norm3": {},
-        "excl":          {},
+        "norm1_enabled": False,
+        "norm1": {},
+        "cd_enabled": False,
+        "cd": {},
+        "crr_enabled": False,
+        "crr": {},
+        "norm2_enabled": False,
+        "norm2": {},
+        "denoise_enabled": False,
+        "denoise": {},
+        "norm3_enabled": False,
+        "norm3": {},
+        "excl": {},
     }
 
 
@@ -128,6 +134,7 @@ def default_pipeline_params() -> dict[str, Any]:
 # `_da` (the upstream array) is excluded from hashing — `file_hash + recipe`
 # fully determine it, since the recipe contains every upstream parameter.
 # ---------------------------------------------------------------------------
+
 
 @st.cache_data(show_spinner=False, max_entries=_STAGE_MAX_ENTRIES)
 def _crr_cached(file_hash: str, _da: xr.DataArray, recipe: dict) -> xr.DataArray:
@@ -142,6 +149,7 @@ def _denoise_cached(file_hash: str, _da: xr.DataArray, recipe: dict) -> xr.DataA
 # ---------------------------------------------------------------------------
 # Orchestrator — injects cached CRR/denoise into backend.run_stage_chain.
 # ---------------------------------------------------------------------------
+
 
 def _run_stage_chain(
     file_hash: str,
@@ -162,7 +170,8 @@ def _run_stage_chain(
 # Params digest — deterministic <1 ms fingerprint for the finals memo
 # ---------------------------------------------------------------------------
 
-def _digest_walk(obj: Any, h: "hashlib._Hash") -> None:
+
+def _digest_walk(obj: Any, h: hashlib._Hash) -> None:
     """Feed a deterministic byte representation of ``obj`` into ``h``.
 
     Dict keys are sorted so key-insertion order never changes the digest;
@@ -197,6 +206,7 @@ def _params_digest(params: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 # Finals memo — plain dict in st.session_state (see module docstring)
 # ---------------------------------------------------------------------------
+
 
 def _finals_memo() -> dict[tuple[str, str, bool], xr.Dataset]:
     return st.session_state.setdefault(_FINALS_MEMO_KEY, {})
@@ -276,6 +286,7 @@ def _finals_for_file(
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def get_finals(
     loaded: dict[str, Any],
     pipeline_params: dict[str, Any] | None = None,
@@ -308,7 +319,12 @@ def get_finals(
     for name, entry in loaded.items():
         try:
             all_datasets[name] = _finals_for_file(
-                entry, params, base_digest, masks.get(name), keep_stages, memo,
+                entry,
+                params,
+                base_digest,
+                masks.get(name),
+                keep_stages,
+                memo,
             )
         except Exception as exc:
             errors.append(f"{name}: {exc}")

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Map Analysis page: spectral map parameters and heatmap visualization."""
 
 from __future__ import annotations
@@ -6,9 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 import streamlit as st
+from streamlit_echarts import st_echarts
 
 from backend._shared.dataset import SpectralDataset
-from streamlit_echarts import st_echarts
 
 from ..charts import convert_x, convert_x_to_native
 from ..controls import render_map_display_controls
@@ -46,17 +45,30 @@ def _make_map_fig_cached(
     every slider tick otherwise, even when other page widgets trigger the
     rerun instead."""
     return make_map_fig(
-        da=_da_map, image_arr=_image_arr, image_meta=image_meta,
-        lambda_min=lmin, lambda_max=lmax, quantity=quantity,
-        colorscale=colorscale, title=title, spectral_unit=spectral_unit,
-        map_opacity=map_opacity, label_min=label_min, label_max=label_max,
+        da=_da_map,
+        image_arr=_image_arr,
+        image_meta=image_meta,
+        lambda_min=lmin,
+        lambda_max=lmax,
+        quantity=quantity,
+        colorscale=colorscale,
+        title=title,
+        spectral_unit=spectral_unit,
+        map_opacity=map_opacity,
+        label_min=label_min,
+        label_max=label_max,
     )
 
 
 @st.fragment
 def _render_map_section(
-    da_map, ds: SpectralDataset, map_name: str, file_hash: str,
-    pipeline_params: dict[str, Any], quantity: str, colorscale: str,
+    da_map,
+    ds: SpectralDataset,
+    map_name: str,
+    file_hash: str,
+    pipeline_params: dict[str, Any],
+    quantity: str,
+    colorscale: str,
     map_opacity: float,
 ) -> None:
     laser_nm = ds.laser_nm
@@ -64,8 +76,12 @@ def _render_map_section(
     x_native = da_map.coords[spectral_dim].values
     try:
         x_disp = convert_x(
-            x_native, spectral_dim, _X_UNIT, laser_nm,
-            src_unit=ds.spectral_unit, native_type=ds.spectral_units,
+            x_native,
+            spectral_dim,
+            _X_UNIT,
+            laser_nm,
+            src_unit=ds.spectral_unit,
+            native_type=ds.spectral_units,
         )
     except ValueError:
         # Only reachable for a RamanShift-native file with no laser wavelength
@@ -91,17 +107,36 @@ def _render_map_section(
         lmin_disp, lmax_disp = st.session_state.get(range_key, (_default_lmin, _default_lmax))
         if lmin_disp < lmax_disp:
             lmin_native = convert_x_to_native(
-                lmin_disp, spectral_dim, _X_UNIT, laser_nm,
-                src_unit=ds.spectral_unit, native_type=ds.spectral_units,
+                lmin_disp,
+                spectral_dim,
+                _X_UNIT,
+                laser_nm,
+                src_unit=ds.spectral_unit,
+                native_type=ds.spectral_units,
             )
             lmax_native = convert_x_to_native(
-                lmax_disp, spectral_dim, _X_UNIT, laser_nm,
-                src_unit=ds.spectral_unit, native_type=ds.spectral_units,
+                lmax_disp,
+                spectral_dim,
+                _X_UNIT,
+                laser_nm,
+                src_unit=ds.spectral_unit,
+                native_type=ds.spectral_units,
             )
             fig_map = _make_map_fig_cached(
-                file_hash, pipeline_params, da_map, ds.image_arr, ds.image_meta,
-                lmin_native, lmax_native, quantity, colorscale, map_name, _UNIT_LABEL,
-                map_opacity, lmin_disp, lmax_disp,
+                file_hash,
+                pipeline_params,
+                da_map,
+                ds.image_arr,
+                ds.image_meta,
+                lmin_native,
+                lmax_native,
+                quantity,
+                colorscale,
+                map_name,
+                _UNIT_LABEL,
+                map_opacity,
+                lmin_disp,
+                lmax_disp,
             )
             st.plotly_chart(fig_map, width="stretch", height=600)
 
@@ -127,8 +162,13 @@ def _render_map_section(
     mean_da = da_map.mean([d for d in da_map.dims if d != spectral_dim], skipna=True)
     st_echarts(
         make_mean_spectrum_option(
-            mean_da, lmin_disp, lmax_disp, _X_UNIT, laser_nm,
-            src_unit=ds.spectral_unit, native_type=ds.spectral_units,
+            mean_da,
+            lmin_disp,
+            lmax_disp,
+            _X_UNIT,
+            laser_nm,
+            src_unit=ds.spectral_unit,
+            native_type=ds.spectral_units,
         ),
         height="200px",
     )
@@ -145,10 +185,7 @@ def render_map_page() -> None:
     with st.spinner("Preparing data…"):
         all_datasets, _errors = get_finals(loaded, pipeline_params)
 
-    map_candidates = {
-        name: entry for name, entry in loaded.items()
-        if entry["dataset"].is_map
-    }
+    map_candidates = {name: entry for name, entry in loaded.items() if entry["dataset"].is_map}
 
     if not map_candidates:
         st.info(
@@ -176,7 +213,7 @@ def render_map_page() -> None:
                 ["integrated", "deviation"],
                 format_func=lambda q: {
                     "integrated": "Integrated intensity",
-                    "deviation":  "Deviation from mean",
+                    "deviation": "Deviation from mean",
                 }[q],
                 key="map_quantity",
             )
@@ -185,11 +222,19 @@ def render_map_page() -> None:
     da_map = final_da(all_datasets.get(map_name))
     if da_map is None:
         with right:
-            st.warning("Processing result not available for this file. Visit the Preprocessing page first.")
+            st.warning(
+                "Processing result not available for this file. Visit the Preprocessing page first."
+            )
         return
 
     with right:
         _render_map_section(
-            da_map, ds, map_name, loaded[map_name]["hash"], pipeline_params,
-            quantity, colorscale, map_opacity,
+            da_map,
+            ds,
+            map_name,
+            loaded[map_name]["hash"],
+            pipeline_params,
+            quantity,
+            colorscale,
+            map_opacity,
         )

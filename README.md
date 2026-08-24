@@ -58,3 +58,18 @@ Drop one or more `.wdf` files in the **sidebar**. The top bar is the analysis pa
 Settings chosen there apply to every later page. Excluded spectra are left as empty pixels so the original scan grid is unchanged.
 
 Processed spectra, decomposition results, and fitted bands can be downloaded as `.npz` files.
+
+---
+
+## Development
+
+```bash
+pip install -r requirements-dev.txt
+pre-commit install
+```
+
+Hooks then run on every `git commit` (Ruff lint/format, trailing whitespace, large-file guard, spelling). To check the whole tree:
+
+```bash
+pre-commit run --all-files
+```

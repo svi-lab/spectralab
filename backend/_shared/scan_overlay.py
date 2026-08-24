@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Draw scan-footprint overlays on WHTL images using PIL."""
 
 from __future__ import annotations
@@ -6,7 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
-from PIL import Image as PILImage, ImageDraw
+from PIL import Image as PILImage
+from PIL import ImageDraw
 
 if TYPE_CHECKING:
     from _shared.scan_geometry import ScanGeometry
@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Coordinate conversion
 # ---------------------------------------------------------------------------
+
 
 def stage_to_px(
     x_stage: float | np.ndarray,
@@ -32,8 +33,8 @@ def stage_to_px(
     By default stage Y and image Y both increase downward.  Pass ``flip_y=True``
     when stage Y increases upward (matches the Map tab's Flip Y toggle).
     """
-    ox    = image_meta["origin_x"]
-    oy    = image_meta["origin_y"]
+    ox = image_meta["origin_x"]
+    oy = image_meta["origin_y"]
     fov_x = image_meta["fov_x"]
     fov_y = image_meta["fov_y"]
 
@@ -49,6 +50,7 @@ def stage_to_px(
 # ---------------------------------------------------------------------------
 # Drawing
 # ---------------------------------------------------------------------------
+
 
 def _draw_point_batch(
     draw: ImageDraw.ImageDraw,
@@ -66,14 +68,14 @@ def _draw_point_batch(
 
 
 def draw_scan_overlay(
-    image_arr:     np.ndarray,
-    image_meta:    dict,
-    geometry:      "ScanGeometry",
-    removed_mask:  np.ndarray | None = None,
-    kept_color:    tuple[int, int, int] = (0, 200, 0),
+    image_arr: np.ndarray,
+    image_meta: dict,
+    geometry: ScanGeometry,
+    removed_mask: np.ndarray | None = None,
+    kept_color: tuple[int, int, int] = (0, 200, 0),
     removed_color: tuple[int, int, int] = (220, 0, 0),
-    line_width:    int = 3,
-    flip_y:        bool = False,
+    line_width: int = 3,
+    flip_y: bool = False,
 ) -> np.ndarray:
     """Return a copy of ``image_arr`` (RGB uint8) with the scan footprint drawn.
 
@@ -89,7 +91,7 @@ def draw_scan_overlay(
     removed_color:
         RGB tuple for CleanData-removed positions.  Default red.
     """
-    img  = PILImage.fromarray(image_arr.astype(np.uint8)).convert("RGB")
+    img = PILImage.fromarray(image_arr.astype(np.uint8)).convert("RGB")
     draw = ImageDraw.Draw(img)
     h, w = image_arr.shape[:2]
 
@@ -108,7 +110,7 @@ def draw_scan_overlay(
             r = max(1, min(8, int(min(r_x, r_y))))
 
         if removed_mask is not None and np.any(removed_mask):
-            kept_sel    = ~removed_mask
+            kept_sel = ~removed_mask
             removed_sel = removed_mask.astype(bool)
             # Draw kept first so removed points render on top
             if np.any(kept_sel):
@@ -125,8 +127,10 @@ def draw_scan_overlay(
         r_px_x = s.radius / image_meta["fov_x"] * w
         r_px_y = s.radius / image_meta["fov_y"] * h
         bbox = [
-            int(px_cx - r_px_x), int(py_cy - r_px_y),
-            int(px_cx + r_px_x), int(py_cy + r_px_y),
+            int(px_cx - r_px_x),
+            int(py_cy - r_px_y),
+            int(px_cx + r_px_x),
+            int(py_cy + r_px_y),
         ]
         draw.ellipse(bbox, outline=kept_color, width=line_width)
 
@@ -139,7 +143,7 @@ def draw_scan_overlay(
     elif s.shape == "rect":
         xs_rect = np.array([s.x_min, s.x_max, s.x_max, s.x_min, s.x_min])
         ys_rect = np.array([s.y_min, s.y_min, s.y_max, s.y_max, s.y_min])
-        px, py  = to_px(xs_rect, ys_rect)
+        px, py = to_px(xs_rect, ys_rect)
         draw.line(list(zip(px.tolist(), py.tolist())), fill=kept_color, width=line_width)
 
     return np.asarray(img)

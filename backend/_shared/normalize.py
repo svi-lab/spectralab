@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Per-spectrum normalization — area and min-max methods."""
 
 from __future__ import annotations
@@ -40,8 +39,7 @@ def _normalize_numpy_block(
         out = (spectra_2d - s_min) / rng
     else:
         raise ValueError(
-            f"normalize method {method!r} is not recognised. "
-            f"Must be one of {NORM_METHODS!r}."
+            f"normalize method {method!r} is not recognised. Must be one of {NORM_METHODS!r}."
         )
     # Shift each spectrum so its minimum is exactly 0.
     # For min_max this is a no-op; for area it removes a constant baseline offset.
@@ -54,6 +52,7 @@ def _make_apply_ufunc_kernel(method: str, x_values: np.ndarray):
         orig_shape = arr.shape
         arr_2d = arr.reshape(-1, orig_shape[-1])
         return _normalize_numpy_block(arr_2d, method, x_values).reshape(orig_shape)
+
     return _kernel
 
 
@@ -84,8 +83,7 @@ def normalize(
     """
     if method not in NORM_METHODS:
         raise ValueError(
-            f"normalize method {method!r} is not recognised. "
-            f"Must be one of {NORM_METHODS!r}."
+            f"normalize method {method!r} is not recognised. Must be one of {NORM_METHODS!r}."
         )
 
     if isinstance(input_spectra, xr.DataArray):

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Pure-numpy helpers for background suppression."""
 
 from __future__ import annotations

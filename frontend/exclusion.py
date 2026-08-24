@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Manual spectrum-exclusion mask: session state, index parsing, digest.
 
 The mask is a plain boolean array over the *spatial* dims only (True =
@@ -29,7 +28,8 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Any, Iterable, Sequence
+from collections.abc import Iterable, Sequence
+from typing import Any
 
 import numpy as np
 import streamlit as st
@@ -58,6 +58,7 @@ def display_range(n: int) -> str:
 # ---------------------------------------------------------------------------
 # Shapes
 # ---------------------------------------------------------------------------
+
 
 def spatial_shape(da: xr.DataArray, spectral_dim: str | None = None) -> tuple[int, ...]:
     """Spatial shape of ``da`` — everything except the spectral axis."""
@@ -103,9 +104,7 @@ def parse_index_spec(text: str, n_max: int) -> list[int]:
             )
         for v in values:
             if not DISPLAY_BASE <= v < n_max + DISPLAY_BASE:
-                raise ValueError(
-                    f"Index {v} is out of range (valid: {display_range(n_max)})."
-                )
+                raise ValueError(f"Index {v} is out of range (valid: {display_range(n_max)}).")
             out.add(v - DISPLAY_BASE)
     return sorted(out)
 
@@ -148,6 +147,7 @@ def parse_pixel_spec(text: str, n_row: int, n_col: int) -> list[tuple[int, int]]
 # ---------------------------------------------------------------------------
 # Mask algebra (pure)
 # ---------------------------------------------------------------------------
+
 
 def apply_selection(
     mask: np.ndarray,
@@ -202,6 +202,7 @@ def mask_digest(mask: np.ndarray | None) -> str:
 # ---------------------------------------------------------------------------
 # Session state
 # ---------------------------------------------------------------------------
+
 
 def get_mask(fname: str, shape: tuple[int, ...]) -> np.ndarray:
     """Stored mask for ``fname``, or a fresh all-False one.

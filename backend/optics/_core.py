@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Pure physics functions for laser penetration depth and thin-film optics.
 All functions work in cm internally; callers convert nm <-> cm at boundaries.
@@ -8,10 +7,10 @@ from __future__ import annotations
 
 import numpy as np
 
-
 # ---------------------------------------------------------------------------
 # Basic optical conversions
 # ---------------------------------------------------------------------------
+
 
 def alpha_from_k(k: float, wavelength_cm: float) -> float:
     """Absorption coefficient from extinction coefficient.
@@ -33,12 +32,13 @@ def k_from_alpha(alpha: float, wavelength_cm: float) -> float:
 # Fresnel reflectances (incoherent / single-interface)
 # ---------------------------------------------------------------------------
 
+
 def fresnel_R_air(n: float, k: float) -> float:
     """Normal-incidence Fresnel reflectance at air/medium interface.
 
     R = ((n-1)^2 + k^2) / ((n+1)^2 + k^2)
     """
-    return ((n - 1) ** 2 + k ** 2) / ((n + 1) ** 2 + k ** 2)
+    return ((n - 1) ** 2 + k**2) / ((n + 1) ** 2 + k**2)
 
 
 def fresnel_R_interface(n1: float, k1: float, n2: float, k2: float) -> float:
@@ -52,6 +52,7 @@ def fresnel_R_interface(n1: float, k1: float, n2: float, k2: float) -> float:
 # ---------------------------------------------------------------------------
 # Penetration depths (Beer-Lambert, analytical)
 # ---------------------------------------------------------------------------
+
 
 def penetration_depth(alpha: float) -> float:
     """1/e penetration depth delta = 1/alpha [cm]; inf if alpha == 0."""
@@ -85,10 +86,14 @@ def d99_corrected(alpha: float, R: float) -> float:
 # Transfer Matrix Method (TMM) — air | film | substrate, normal incidence
 # ---------------------------------------------------------------------------
 
+
 def tmm_r_t(
     wavelength_cm: float,
-    n_film: float, k_film: float, d_film_cm: float,
-    n_sub: float, k_sub: float,
+    n_film: float,
+    k_film: float,
+    d_film_cm: float,
+    n_sub: float,
+    k_sub: float,
 ) -> tuple:
     """Transfer Matrix Method for a single film on a substrate at normal incidence.
 
@@ -170,8 +175,11 @@ def tmm_intensity_profile(
     z_film_cm: np.ndarray,
     z_sub_cm: np.ndarray,
     wavelength_cm: float,
-    n_film: float, k_film: float, d_film_cm: float,
-    n_sub: float, k_sub: float,
+    n_film: float,
+    k_film: float,
+    d_film_cm: float,
+    n_sub: float,
+    k_sub: float,
     I0: float = 1.0,
 ) -> tuple:
     """Intensity profile I(z)/I0 across film (TMM) and substrate (Beer-Lambert).
@@ -198,8 +206,11 @@ def tmm_absorbed_density(
     z_film_cm: np.ndarray,
     z_sub_cm: np.ndarray,
     wavelength_cm: float,
-    n_film: float, k_film: float, d_film_cm: float,
-    n_sub: float, k_sub: float,
+    n_film: float,
+    k_film: float,
+    d_film_cm: float,
+    n_sub: float,
+    k_sub: float,
     I0: float = 1.0,
 ) -> tuple:
     """Absorbed power density -dI/dz [I0/cm] across film and substrate.
@@ -215,8 +226,7 @@ def tmm_absorbed_density(
     alpha_sub = alpha_from_k(k_sub, wavelength_cm)
 
     I_film, I_sub = tmm_intensity_profile(
-        z_film_cm, z_sub_cm, wavelength_cm,
-        n_film, k_film, d_film_cm, n_sub, k_sub, I0
+        z_film_cm, z_sub_cm, wavelength_cm, n_film, k_film, d_film_cm, n_sub, k_sub, I0
     )
 
     return alpha_film * I_film, alpha_sub * I_sub
@@ -226,11 +236,15 @@ def tmm_absorbed_density(
 # TMM energy fractions
 # ---------------------------------------------------------------------------
 
+
 def tmm_energy_fractions(
     I0: float,
     wavelength_cm: float,
-    n_film: float, k_film: float, d_film_cm: float,
-    n_sub: float, k_sub: float,
+    n_film: float,
+    k_film: float,
+    d_film_cm: float,
+    n_sub: float,
+    k_sub: float,
 ) -> tuple:
     """Energy fractions via TMM: (R_total, A_film, T_to_substrate).
 
@@ -250,6 +264,7 @@ def tmm_energy_fractions(
 # ---------------------------------------------------------------------------
 # Beer-Lambert intensity profile (reference / fallback)
 # ---------------------------------------------------------------------------
+
 
 def intensity_profile(
     z_film: np.ndarray,
@@ -295,6 +310,7 @@ def absorbed_power_density(
 # ---------------------------------------------------------------------------
 # Energy fractions (Beer-Lambert)
 # ---------------------------------------------------------------------------
+
 
 def film_absorption_fraction(
     I0: float,
@@ -345,12 +361,21 @@ def substrate_exit_fraction(
 
 
 __all__ = [
-    "alpha_from_k", "k_from_alpha",
-    "fresnel_R_air", "fresnel_R_interface",
-    "penetration_depth", "d99_simple", "d99_corrected",
-    "tmm_r_t", "tmm_field_in_film",
-    "tmm_intensity_profile", "tmm_absorbed_density", "tmm_energy_fractions",
-    "intensity_profile", "absorbed_power_density",
-    "film_absorption_fraction", "substrate_transmission_fraction",
+    "alpha_from_k",
+    "k_from_alpha",
+    "fresnel_R_air",
+    "fresnel_R_interface",
+    "penetration_depth",
+    "d99_simple",
+    "d99_corrected",
+    "tmm_r_t",
+    "tmm_field_in_film",
+    "tmm_intensity_profile",
+    "tmm_absorbed_density",
+    "tmm_energy_fractions",
+    "intensity_profile",
+    "absorbed_power_density",
+    "film_absorption_fraction",
+    "substrate_transmission_fraction",
     "substrate_exit_fraction",
 ]

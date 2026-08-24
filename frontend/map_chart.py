@@ -15,9 +15,9 @@ from .charts import UNIT_LABELS, convert_x
 from .exclusion import DISPLAY_BASE
 
 FS_TITLE = 26
-FS_AXIS  = 22
-FS_TICK  = 18
-FS_CBAR  = 18
+FS_AXIS = 22
+FS_TICK = 18
+FS_CBAR = 18
 
 
 def _colorbar(title: str, tickformat: str = "") -> dict:
@@ -116,8 +116,12 @@ def make_mean_spectrum_option(
     spectral_dim = mean_da.dims[0]
     x_native = mean_da.coords[spectral_dim].values
     x = convert_x(
-        x_native, spectral_dim, x_unit, laser_nm,
-        src_unit=src_unit, native_type=native_type,
+        x_native,
+        spectral_dim,
+        x_unit,
+        laser_nm,
+        src_unit=src_unit,
+        native_type=native_type,
     ).tolist()
     y = np.nan_to_num(mean_da.values).tolist()
     return {
@@ -138,19 +142,23 @@ def make_mean_spectrum_option(
             "name": "",
         },
         "tooltip": {"trigger": "axis"},
-        "series": [{
-            "type": "line",
-            "data": [[xi, yi] for xi, yi in zip(x, y)],
-            "showSymbol": False,
-            "lineStyle": {"width": 1.5, "color": "#4b8bbe"},
-            "markArea": {
-                "silent": True,
-                "data": [[
-                    {"xAxis": lmin, "itemStyle": {"color": "rgba(255, 165, 0, 0.25)"}},
-                    {"xAxis": lmax},
-                ]],
-            },
-        }],
+        "series": [
+            {
+                "type": "line",
+                "data": [[xi, yi] for xi, yi in zip(x, y)],
+                "showSymbol": False,
+                "lineStyle": {"width": 1.5, "color": "#4b8bbe"},
+                "markArea": {
+                    "silent": True,
+                    "data": [
+                        [
+                            {"xAxis": lmin, "itemStyle": {"color": "rgba(255, 165, 0, 0.25)"}},
+                            {"xAxis": lmax},
+                        ]
+                    ],
+                },
+            }
+        ],
     }
 
 
@@ -162,17 +170,23 @@ def _add_image_overlay(
     """Overlay the white-light image on a heatmap figure, in place."""
     if image_arr is None or image_meta is None:
         return
-    ox    = image_meta["origin_x"]
-    oy    = image_meta["origin_y"]
+    ox = image_meta["origin_x"]
+    oy = image_meta["origin_y"]
     fov_x = image_meta["fov_x"]
     fov_y = image_meta["fov_y"]
     fig.add_layout_image(
         source=_img_to_b64(image_arr),
-        xref="x", yref="y",
-        x=ox, y=oy,
-        sizex=fov_x, sizey=fov_y,
-        xanchor="left", yanchor="top",
-        opacity=1.0, layer="below", sizing="stretch",
+        xref="x",
+        yref="y",
+        x=ox,
+        y=oy,
+        sizex=fov_x,
+        sizey=fov_y,
+        xanchor="left",
+        yanchor="top",
+        opacity=1.0,
+        layer="below",
+        sizing="stretch",
     )
 
 
@@ -245,19 +259,22 @@ def make_scalar_map_fig(
     if value_format is not None:
         hover_fmt = value_format
     fig = go.Figure()
-    fig.add_trace(go.Heatmap(
-        x=col_coords,
-        y=row_coords,
-        z=z,
-        opacity=map_opacity,
-        colorscale=colorscale,
-        colorbar=_colorbar(cbar_label, tick_fmt),
-        hovertemplate=(
-            "x: %{x:.1f} µm<br>y: %{y:.1f} µm<br>"
-            + cbar_label.split("(")[0].strip() + f": %{{z:{hover_fmt}}}<extra></extra>"
-        ),
-        zsmooth=False,
-    ))
+    fig.add_trace(
+        go.Heatmap(
+            x=col_coords,
+            y=row_coords,
+            z=z,
+            opacity=map_opacity,
+            colorscale=colorscale,
+            colorbar=_colorbar(cbar_label, tick_fmt),
+            hovertemplate=(
+                "x: %{x:.1f} µm<br>y: %{y:.1f} µm<br>"
+                + cbar_label.split("(")[0].strip()
+                + f": %{{z:{hover_fmt}}}<extra></extra>"
+            ),
+            zsmooth=False,
+        )
+    )
     _add_image_overlay(fig, image_arr, image_meta)
     _apply_map_layout(fig, title, cbar_label)
     return fig
@@ -265,9 +282,9 @@ def make_scalar_map_fig(
 
 # Marker colours for the selection map. Kept pixels are near-transparent so
 # the intensity heatmap underneath stays readable; excluded ones are opaque.
-_SEL_KEPT_RGBA     = "rgba(255,255,255,0.06)"
-_SEL_EXCLUDED_RGBA = "rgba(217,48,37,0.95)"    # red   — user-excluded
-_SEL_AUTO_RGBA     = "rgba(120,120,120,0.85)"  # grey  — Clean Data removed
+_SEL_KEPT_RGBA = "rgba(255,255,255,0.06)"
+_SEL_EXCLUDED_RGBA = "rgba(217,48,37,0.95)"  # red   — user-excluded
+_SEL_AUTO_RGBA = "rgba(120,120,120,0.85)"  # grey  — Clean Data removed
 
 
 def make_selection_map_fig(
@@ -327,28 +344,38 @@ def make_selection_map_fig(
     colors[excluded] = _SEL_EXCLUDED_RGBA  # manual wins: it is what's editable
 
     fig = go.Figure()
-    fig.add_trace(go.Heatmap(
-        x=col_coords, y=row_coords, z=z,
-        opacity=map_opacity, colorscale=colorscale, showscale=False,
-        hoverinfo="skip", zsmooth=False,
-    ))
-    fig.add_trace(go.Scattergl(
-        x=xs.ravel(), y=ys.ravel(),
-        mode="markers",
-        marker=dict(
-            size=int(np.clip(600 // max(n_row, n_col, 1), 3, 14)),
-            color=colors.tolist(),
-            line=dict(width=0),
-        ),
-        # customdata is the *display* (1-based) pixel address — a hovertemplate
-        # cannot do arithmetic, so the offset has to be baked into the data.
-        # Readers convert back with ``- DISPLAY_BASE`` (see
-        # pages/preprocessing.py::_selected_flat_indices).
-        customdata=np.column_stack([r_idx + DISPLAY_BASE, c_idx + DISPLAY_BASE]),
-        hovertemplate="row %{customdata[0]}, col %{customdata[1]}<extra></extra>",
-        showlegend=False,
-        unselected=dict(marker=dict(opacity=1.0)),  # selection must not dim the rest
-    ))
+    fig.add_trace(
+        go.Heatmap(
+            x=col_coords,
+            y=row_coords,
+            z=z,
+            opacity=map_opacity,
+            colorscale=colorscale,
+            showscale=False,
+            hoverinfo="skip",
+            zsmooth=False,
+        )
+    )
+    fig.add_trace(
+        go.Scattergl(
+            x=xs.ravel(),
+            y=ys.ravel(),
+            mode="markers",
+            marker=dict(
+                size=int(np.clip(600 // max(n_row, n_col, 1), 3, 14)),
+                color=colors.tolist(),
+                line=dict(width=0),
+            ),
+            # customdata is the *display* (1-based) pixel address — a hovertemplate
+            # cannot do arithmetic, so the offset has to be baked into the data.
+            # Readers convert back with ``- DISPLAY_BASE`` (see
+            # pages/preprocessing.py::_selected_flat_indices).
+            customdata=np.column_stack([r_idx + DISPLAY_BASE, c_idx + DISPLAY_BASE]),
+            hovertemplate="row %{customdata[0]}, col %{customdata[1]}<extra></extra>",
+            showlegend=False,
+            unselected=dict(marker=dict(opacity=1.0)),  # selection must not dim the rest
+        )
+    )
     _add_image_overlay(fig, image_arr, image_meta)
     _apply_map_layout(fig, title, "")
     fig.update_layout(dragmode="select", margin=dict(t=80, l=70, r=40, b=60))
@@ -419,7 +446,13 @@ def make_map_fig(
         cbar_label = f"integrated intensity ({label_range})"
 
     return make_scalar_map_fig(
-        z, y_coords, x_coords, image_arr, image_meta,
-        cbar_label=cbar_label, colorscale=colorscale, title=title,
+        z,
+        y_coords,
+        x_coords,
+        image_arr,
+        image_meta,
+        cbar_label=cbar_label,
+        colorscale=colorscale,
+        title=title,
         map_opacity=map_opacity,
     )

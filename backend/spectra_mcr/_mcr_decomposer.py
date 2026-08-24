@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """High-level MCR-ALS curve resolution: :class:`MCRDecomposer`."""
 
 from __future__ import annotations
@@ -61,13 +60,9 @@ class MCRDecomposer:
 
     def __post_init__(self) -> None:
         if self.n_components < 1:
-            raise ValueError(
-                f"n_components must be >= 1, got {self.n_components}"
-            )
+            raise ValueError(f"n_components must be >= 1, got {self.n_components}")
 
-    def decompose(
-        self, spectra: xr.DataArray
-    ) -> tuple[xr.DataArray, dict[str, Any]]:
+    def decompose(self, spectra: xr.DataArray) -> tuple[xr.DataArray, dict[str, Any]]:
         """Run MCR-ALS, return ``(reconstructed_da, payload)``.
 
         ``payload`` keys: ``components`` (``S``, k x n_spectral ndarray),
@@ -77,8 +72,7 @@ class MCRDecomposer:
         """
         if not isinstance(spectra, xr.DataArray):
             raise TypeError(
-                "MCRDecomposer.decompose expects an xarray.DataArray; got "
-                f"{type(spectra).__name__}"
+                f"MCRDecomposer.decompose expects an xarray.DataArray; got {type(spectra).__name__}"
             )
 
         sdim = resolve_spectral_dim(spectra, self.spectral_dim)
@@ -122,9 +116,7 @@ class MCRDecomposer:
             da_w.shape,
         )
         if tuple(da_w.dims) != orig_order:
-            reconstructed_da = da_w.copy(data=reconstructed_w_array).transpose(
-                *orig_order
-            )
+            reconstructed_da = da_w.copy(data=reconstructed_w_array).transpose(*orig_order)
             reconstructed = reconstructed_da.values
         else:
             reconstructed = reconstructed_w_array
@@ -149,9 +141,7 @@ class MCRDecomposer:
         }
 
         if self.quantify_ambiguity and self.n_components > 1:
-            eq_idx = (
-                self.equality_index if self.equality_spectrum is not None else None
-            )
+            eq_idx = self.equality_index if self.equality_spectrum is not None else None
             full_payload["ambiguity"] = compute_mcr_ambiguity(
                 da_w.values,
                 payload["abundances"],

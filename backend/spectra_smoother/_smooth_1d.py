@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Low-level 1-D smoothing: Savitzky-Golay and Whittaker-Eilers.
 
 All implementations use only NumPy and SciPy (already required by wdfkit).
@@ -41,18 +40,11 @@ def savgol_smooth_1d(
     """
     y = np.asarray(y, dtype=np.float64)
     if y.ndim != 1:
-        raise ValueError(
-            f"savgol_smooth_1d expects 1-D input; got ndim={y.ndim}"
-        )
+        raise ValueError(f"savgol_smooth_1d expects 1-D input; got ndim={y.ndim}")
     if window_length % 2 == 0 or window_length < 3:
-        raise ValueError(
-            f"window_length must be odd and >= 3; got {window_length}"
-        )
+        raise ValueError(f"window_length must be odd and >= 3; got {window_length}")
     if polyorder >= window_length:
-        raise ValueError(
-            f"polyorder ({polyorder}) must be < "
-            f"window_length ({window_length})"
-        )
+        raise ValueError(f"polyorder ({polyorder}) must be < window_length ({window_length})")
     return savgol_filter(y, window_length, polyorder).astype(np.float64)
 
 
@@ -102,9 +94,7 @@ def whittaker_smooth_1d(
     """
     y = np.asarray(y, dtype=np.float64)
     if y.ndim != 1:
-        raise ValueError(
-            f"whittaker_smooth_1d expects 1-D input; got ndim={y.ndim}"
-        )
+        raise ValueError(f"whittaker_smooth_1d expects 1-D input; got ndim={y.ndim}")
     if lam <= 0:
         raise ValueError(f"lam must be positive; got {lam}")
     n = len(y)
@@ -231,9 +221,7 @@ def wavelet_smooth_1d(
 
     y = np.asarray(y, dtype=np.float64)
     if y.ndim != 1:
-        raise ValueError(
-            f"wavelet_smooth_1d expects 1-D input; got ndim={y.ndim}"
-        )
+        raise ValueError(f"wavelet_smooth_1d expects 1-D input; got ndim={y.ndim}")
 
     coeffs = pywt.wavedec(y, wavelet, level=level)
 

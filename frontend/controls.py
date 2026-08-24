@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Reusable Streamlit widgets for the WDF Viewer."""
 
 from __future__ import annotations
@@ -9,25 +8,24 @@ import streamlit as st
 
 X_UNIT_OPTIONS = ["wavelength", "energy", "wavenumber", "raman_shift"]
 X_UNIT_FMT = {
-    "wavelength":  "Wavelength (nm)",
-    "energy":      "Energy (eV)",
-    "wavenumber":  "Wavenumber (cm⁻¹)",
+    "wavelength": "Wavelength (nm)",
+    "energy": "Energy (eV)",
+    "wavenumber": "Wavenumber (cm⁻¹)",
     "raman_shift": "Raman Shift (cm⁻¹)",
 }
 UNIT_DEFAULT = {
-    "RamanShift":   "raman_shift",
-    "Wavenumber":   "wavenumber",
-    "Nanometer":    "energy",
+    "RamanShift": "raman_shift",
+    "Wavenumber": "wavenumber",
+    "Nanometer": "energy",
     "ElectronVolt": "energy",
 }
 
 # Engine option labels — shared with the Preprocessing page's 1D/3D quick
 # presets, which seed the widget keys with these exact strings.
-CRR_ENGINE_1D          = "1D — per spectrum"
-CRR_ENGINE_2D3D        = "2D / 3D — collection & spatial"
-DENOISE_ENGINE_PCA      = "PCA — population-based"
+CRR_ENGINE_1D = "1D — per spectrum"
+CRR_ENGINE_2D3D = "2D / 3D — collection & spatial"
+DENOISE_ENGINE_PCA = "PCA — population-based"
 DENOISE_ENGINE_SMOOTHER = "Smoother — per spectrum"
-
 
 
 def render_axis_controls(
@@ -53,7 +51,9 @@ def render_axis_controls(
     if x_unit == "raman_shift" and laser_nm is None:
         effective_laser = col_laser.number_input(
             "Laser wavelength (nm)",
-            value=532.0, min_value=1.0, step=0.1,
+            value=532.0,
+            min_value=1.0,
+            step=0.1,
             key=f"{key_prefix}_laser_nm",
             help="Not found in file — enter the excitation wavelength.",
         )
@@ -79,7 +79,10 @@ def render_map_display_controls(key_prefix: str, inline: bool = False) -> tuple[
     )
     map_opacity = col_opacity.slider(
         "Map opacity",
-        min_value=0.2, max_value=1.0, value=0.75, step=0.05,
+        min_value=0.2,
+        max_value=1.0,
+        value=0.75,
+        step=0.05,
         key=f"{key_prefix}_opacity",
     )
     return colorscale, map_opacity
@@ -89,7 +92,9 @@ def render_clean_data_params() -> dict[str, Any]:
     """Render CleanData parameter widget. Returns cd_params dict."""
     n_zeros = st.number_input(
         "Consecutive zeros to flag",
-        value=10, min_value=1, step=1,
+        value=10,
+        min_value=1,
+        step=1,
         key="cd_n_zeros",
         help=(
             "A spectrum is flagged as saturated when it contains at least "
@@ -119,24 +124,33 @@ def render_crr_params() -> dict[str, Any]:
             "spectral features."
         ),
     )
-    force_1d = (engine == CRR_ENGINE_1D)
+    force_1d = engine == CRR_ENGINE_1D
 
     with st.expander("1D engine parameters", expanded=True):
         col1, col2 = st.columns(2)
         spike_width = col1.number_input(
-            "spike_width (odd ≥ 3)", value=5, min_value=3, step=2,
+            "spike_width (odd ≥ 3)",
+            value=5,
+            min_value=3,
+            step=2,
             key="crr_spike_width",
             help="Medfilt window in spectral channels. Must be odd.",
         )
         if spike_width % 2 == 0:
             spike_width += 1
         spike_threshold = col2.number_input(
-            "spike_threshold", value=3.5, min_value=0.1, step=0.5,
+            "spike_threshold",
+            value=3.5,
+            min_value=0.1,
+            step=0.5,
             key="crr_spike_threshold",
             help="Spike cutoff = threshold × MAD noise. Lower = more aggressive.",
         )
         spike_passes = st.number_input(
-            "spike_passes", value=3, min_value=1, step=1,
+            "spike_passes",
+            value=3,
+            min_value=1,
+            step=1,
             key="crr_spike_passes",
         )
 
@@ -151,22 +165,37 @@ def render_crr_params() -> dict[str, Any]:
         with st.expander("Collection / 3D engine parameters"):
             c1, c2 = st.columns(2)
             map_sensitivity = c1.number_input(
-                "map_sensitivity", value=0.01, min_value=1e-4, step=0.005,
-                format="%.4f", key="crr_map_sensitivity",
+                "map_sensitivity",
+                value=0.01,
+                min_value=1e-4,
+                step=0.005,
+                format="%.4f",
+                key="crr_map_sensitivity",
             )
             map_disk_radius = c2.number_input(
-                "map_disk_radius", value=3, min_value=1, step=1,
+                "map_disk_radius",
+                value=3,
+                min_value=1,
+                step=1,
                 key="crr_map_disk_radius",
             )
             map_spike_width = c1.number_input(
-                "map_spike_width", value=5, min_value=1, step=1,
+                "map_spike_width",
+                value=5,
+                min_value=1,
+                step=1,
                 key="crr_map_spike_width",
             )
             map_method = c2.selectbox(
-                "map_method", ["median", "pca"], key="crr_map_method",
+                "map_method",
+                ["median", "pca"],
+                key="crr_map_method",
             )
             map_n_components = st.number_input(
-                "map_n_components (PCA)", value=3, min_value=1, step=1,
+                "map_n_components (PCA)",
+                value=3,
+                min_value=1,
+                step=1,
                 key="crr_map_n_components",
             )
 
@@ -199,13 +228,13 @@ def render_denoising_params() -> dict[str, Any]:
             "Works on any data shape including single spectra."
         ),
     )
-    per_spectrum = (engine == DENOISE_ENGINE_SMOOTHER)
+    per_spectrum = engine == DENOISE_ENGINE_SMOOTHER
 
-    nc_type   = "mle"
-    nc_int    = 2
-    nc_float  = 0.95
+    nc_type = "mle"
+    nc_int = 2
+    nc_float = 0.95
     subtract_min = True
-    restore_min  = False
+    restore_min = False
 
     if not per_spectrum:
         with st.expander("PCA parameters", expanded=True):
@@ -222,22 +251,28 @@ def render_denoising_params() -> dict[str, Any]:
             )
             if nc_type == "int":
                 nc_int = st.number_input(
-                    "n_components (count)", value=2, min_value=1, step=1,
+                    "n_components (count)",
+                    value=2,
+                    min_value=1,
+                    step=1,
                     key="denoise_nc_int",
                 )
             elif nc_type == "float":
                 nc_float = st.number_input(
-                    "n_components (variance ratio)", value=0.95,
-                    min_value=0.01, max_value=0.9999, step=0.01,
+                    "n_components (variance ratio)",
+                    value=0.95,
+                    min_value=0.01,
+                    max_value=0.9999,
+                    step=0.01,
                     key="denoise_nc_float",
                 )
             baseline = st.selectbox(
                 "Baseline handling",
                 ["shape", "preserve", "raw"],
                 format_func={
-                    "shape":    "Shape only (default)",
+                    "shape": "Shape only (default)",
                     "preserve": "Preserve absolute intensities",
-                    "raw":      "Fit raw signal",
+                    "raw": "Fit raw signal",
                 }.__getitem__,
                 key="denoise_baseline",
                 help=(
@@ -253,7 +288,7 @@ def render_denoising_params() -> dict[str, Any]:
                 ),
             )
             subtract_min = baseline in ("shape", "preserve")
-            restore_min  = (baseline == "preserve")
+            restore_min = baseline == "preserve"
 
     smoother_params: dict[str, Any] = {}
     if per_spectrum:
@@ -262,9 +297,9 @@ def render_denoising_params() -> dict[str, Any]:
                 "Method",
                 ["savgol", "whittaker", "wavelet"],
                 format_func={
-                    "savgol":    "Savitzky-Golay",
+                    "savgol": "Savitzky-Golay",
                     "whittaker": "Whittaker-Eilers",
-                    "wavelet":   "Wavelet (VisuShrink)",
+                    "wavelet": "Wavelet (VisuShrink)",
                 }.__getitem__,
                 key="denoise_sm_method",
                 help=(
@@ -282,43 +317,73 @@ def render_denoising_params() -> dict[str, Any]:
             if sm_method == "savgol":
                 sc1, sc2 = st.columns(2)
                 sm_wl = sc1.number_input(
-                    "window_length (odd ≥ 3)", value=11, min_value=3,
-                    step=2, key="denoise_sm_window_length",
+                    "window_length (odd ≥ 3)",
+                    value=11,
+                    min_value=3,
+                    step=2,
+                    key="denoise_sm_window_length",
                 )
                 if sm_wl % 2 == 0:
                     sm_wl += 1
                 sm_po = sc2.number_input(
-                    "polyorder", value=3, min_value=1,
-                    max_value=int(sm_wl) - 1, step=1, key="denoise_sm_polyorder",
+                    "polyorder",
+                    value=3,
+                    min_value=1,
+                    max_value=int(sm_wl) - 1,
+                    step=1,
+                    key="denoise_sm_polyorder",
                 )
                 smoother_params = dict(
-                    method="savgol", window_length=int(sm_wl), polyorder=int(sm_po),
-                    lam=None, d=2, auto_lam_calls=5,
-                    wavelet="db4", wavelet_level=None, wavelet_threshold="soft",
+                    method="savgol",
+                    window_length=int(sm_wl),
+                    polyorder=int(sm_po),
+                    lam=None,
+                    d=2,
+                    auto_lam_calls=5,
+                    wavelet="db4",
+                    wavelet_level=None,
+                    wavelet_threshold="soft",
                 )
             elif sm_method == "whittaker":
                 use_auto_lam = st.checkbox(
-                    "Auto λ (GCV minimisation)", value=True, key="denoise_sm_auto_lam",
+                    "Auto λ (GCV minimisation)",
+                    value=True,
+                    key="denoise_sm_auto_lam",
                 )
                 sc1, sc2 = st.columns(2)
                 sm_lam: float | None = None
                 if not use_auto_lam:
                     sm_lam = sc1.number_input(
-                        "λ (lam)", value=100.0, min_value=0.001,
-                        step=10.0, key="denoise_sm_lam",
+                        "λ (lam)",
+                        value=100.0,
+                        min_value=0.001,
+                        step=10.0,
+                        key="denoise_sm_lam",
                     )
                 sm_d = sc2.number_input(
-                    "d (difference order)", value=2, min_value=1, step=1,
+                    "d (difference order)",
+                    value=2,
+                    min_value=1,
+                    step=1,
                     key="denoise_sm_d",
                 )
                 sm_alc = st.number_input(
-                    "auto_lam_calls", value=5, min_value=1, step=1,
+                    "auto_lam_calls",
+                    value=5,
+                    min_value=1,
+                    step=1,
                     key="denoise_sm_auto_lam_calls",
                 )
                 smoother_params = dict(
-                    method="whittaker", window_length=11, polyorder=3,
-                    lam=sm_lam, d=int(sm_d), auto_lam_calls=int(sm_alc),
-                    wavelet="db4", wavelet_level=None, wavelet_threshold="soft",
+                    method="whittaker",
+                    window_length=11,
+                    polyorder=3,
+                    lam=sm_lam,
+                    d=int(sm_d),
+                    auto_lam_calls=int(sm_alc),
+                    wavelet="db4",
+                    wavelet_level=None,
+                    wavelet_threshold="soft",
                 )
             else:  # wavelet
                 wv_col1, wv_col2 = st.columns(2)
@@ -345,13 +410,20 @@ def render_denoising_params() -> dict[str, Any]:
                     ),
                 )
                 wv_level = st.number_input(
-                    "Decomposition level (0 = auto)", value=0, min_value=0, step=1,
+                    "Decomposition level (0 = auto)",
+                    value=0,
+                    min_value=0,
+                    step=1,
                     key="denoise_sm_wavelet_level",
                     help="0 uses the maximum level allowed by the signal length.",
                 )
                 smoother_params = dict(
-                    method="wavelet", window_length=11, polyorder=3,
-                    lam=None, d=2, auto_lam_calls=5,
+                    method="wavelet",
+                    window_length=11,
+                    polyorder=3,
+                    lam=None,
+                    d=2,
+                    auto_lam_calls=5,
                     wavelet=wv_family,
                     wavelet_level=None if int(wv_level) == 0 else int(wv_level),
                     wavelet_threshold=wv_mode,
@@ -394,11 +466,17 @@ def render_nmf_params() -> dict[str, Any]:
         )
         col1, col2 = st.columns(2)
         max_iter = col1.number_input(
-            "max_iter", value=500, min_value=50, step=50,
+            "max_iter",
+            value=500,
+            min_value=50,
+            step=50,
             key="nmf_max_iter",
         )
         random_state = col2.number_input(
-            "random_state (seed)", value=0, min_value=0, step=1,
+            "random_state (seed)",
+            value=0,
+            min_value=0,
+            step=1,
             key="nmf_random_state",
         )
     return dict(
@@ -422,7 +500,10 @@ def render_mcr_params() -> dict[str, Any]:
     with st.expander("Advanced MCR-ALS parameters", expanded=False):
         col1, col2 = st.columns(2)
         max_iter = col1.number_input(
-            "max_iter", value=200, min_value=20, step=20,
+            "max_iter",
+            value=200,
+            min_value=20,
+            step=20,
             key="mcr_max_iter",
             help=(
                 "Hard cap on ALS iterations. The fit normally stops earlier "
@@ -431,8 +512,13 @@ def render_mcr_params() -> dict[str, Any]:
             ),
         )
         tol = col2.number_input(
-            "Convergence threshold (%ΔLOF)", value=0.1, min_value=0.001,
-            max_value=5.0, step=0.05, format="%.3f", key="mcr_tol",
+            "Convergence threshold (%ΔLOF)",
+            value=0.1,
+            min_value=0.001,
+            max_value=5.0,
+            step=0.05,
+            format="%.3f",
+            key="mcr_tol",
             help=(
                 "Stop when the lack-of-fit (%LOF) changes by less than this "
                 "between iterations. 0.1% is the common default."
@@ -440,8 +526,12 @@ def render_mcr_params() -> dict[str, Any]:
         )
         col3, col4 = st.columns(2)
         simplisma_offset = col3.number_input(
-            "SIMPLISMA noise offset (%)", value=5.0, min_value=0.1,
-            max_value=50.0, step=1.0, key="mcr_offset",
+            "SIMPLISMA noise offset (%)",
+            value=5.0,
+            min_value=0.1,
+            max_value=50.0,
+            step=1.0,
+            key="mcr_offset",
             help=(
                 "Noise floor for the pure-pixel search that seeds the fit. "
                 "Higher values are more robust to noisy spectra; 5% is a good "
@@ -449,7 +539,10 @@ def render_mcr_params() -> dict[str, Any]:
             ),
         )
         random_state = col4.number_input(
-            "random_state (seed)", value=0, min_value=0, step=1,
+            "random_state (seed)",
+            value=0,
+            min_value=0,
+            step=1,
             key="mcr_random_state",
             help="Seed for subsampling in the rank/ambiguity diagnostics.",
         )

@@ -22,7 +22,9 @@ def _wavelength_axis(n: int = 850) -> np.ndarray:
     return np.linspace(250.0, 1100.0, n)
 
 
-def _narrow_line(wl: np.ndarray, center_nm: float, amp: float = 800.0, sigma_nm: float = 0.35) -> np.ndarray:
+def _narrow_line(
+    wl: np.ndarray, center_nm: float, amp: float = 800.0, sigma_nm: float = 0.35
+) -> np.ndarray:
     return amp * np.exp(-0.5 * ((wl - center_nm) / sigma_nm) ** 2)
 
 

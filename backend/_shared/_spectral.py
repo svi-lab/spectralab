@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Shared helpers for preprocessing DataArrays."""
 
 from __future__ import annotations
@@ -14,9 +13,7 @@ def resolve_spectral_dim(
     """Return the spectral dimension name (last dim by default)."""
     if spectral_dim is not None:
         if spectral_dim not in da.dims:
-            raise ValueError(
-                f"spectral_dim {spectral_dim!r} is not among dims {da.dims!r}"
-            )
+            raise ValueError(f"spectral_dim {spectral_dim!r} is not among dims {da.dims!r}")
         return spectral_dim
     if not da.dims:
         raise ValueError("DataArray has no dimensions")

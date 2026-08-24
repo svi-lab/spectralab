@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Literature defect-band position presets for PL deconvolution (ZnO:Al, TiO2)."""
 
 from __future__ import annotations
@@ -20,7 +19,9 @@ class BandPreset:
 _ZNO_AL: tuple[BandPreset, ...] = (
     BandPreset("376 nm (3.30 eV)", 376, 3.30, "CBM → VBM (NBE)"),
     BandPreset(
-        "390 nm (3.18 eV)", 390, 3.18,
+        "390 nm (3.18 eV)",
+        390,
+        3.18,
         "Al_Zn/(Al_Zn–Zn_i) → V_O²⁺",
         tentative=True,
     ),

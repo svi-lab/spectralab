@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Decomposition page: NMF or MCR-ALS pattern discovery across a map scan."""
 
 from __future__ import annotations
@@ -10,7 +9,6 @@ from streamlit_echarts import st_echarts
 from backend._shared.dataset import SpectralDataset
 from backend.spectra_decomposer import Decomposer, compute_nmf_diagnostic_curve
 from backend.spectra_mcr import MCRDecomposer, compute_mcr_rank_svd
-from ..export_utils import mcr_to_npz, nmf_to_npz
 
 from ..charts import (
     make_components_echarts,
@@ -23,6 +21,7 @@ from ..controls import (
     render_mcr_params,
     render_nmf_params,
 )
+from ..export_utils import mcr_to_npz, nmf_to_npz
 from ..map_chart import make_scalar_map_fig
 from ..pipeline_cache import default_pipeline_params, final_da, get_finals
 
@@ -63,10 +62,7 @@ def render_decomposition_page() -> None:
     with st.spinner("Preparing data…"):
         all_datasets, _errors = get_finals(loaded, pipeline_params)
 
-    map_candidates = {
-        name: entry for name, entry in loaded.items()
-        if entry["dataset"].is_map
-    }
+    map_candidates = {name: entry for name, entry in loaded.items() if entry["dataset"].is_map}
     if not map_candidates:
         st.info(
             "Decomposition requires a map scan (3D row/column/spectral data) "
@@ -96,7 +92,9 @@ def render_decomposition_page() -> None:
     da_map = final_da(all_datasets.get(map_name))
     if da_map is None:
         with right:
-            st.warning("Processing result not available for this file. Visit the Preprocessing page first.")
+            st.warning(
+                "Processing result not available for this file. Visit the Preprocessing page first."
+            )
         return
 
     with left:
@@ -133,14 +131,19 @@ def _render_mcr(left, right, loaded, all_datasets, da_map, ds, map_name):
 
     with left:
         with st.container(border=True):
-            st.markdown('<p class="section-header">Number of Components</p>', unsafe_allow_html=True)
+            st.markdown(
+                '<p class="section-header">Number of Components</p>', unsafe_allow_html=True
+            )
             st.caption(
                 "Use the SVD scree to see how many spectra rise above the "
                 "noise floor — pick the count just before the bars go flat."
             )
             run_rank = st.button("Estimate rank (SVD)", key="mcr_run_rank")
             n_components = st.number_input(
-                "Number of components", value=2, min_value=1, step=1,
+                "Number of components",
+                value=2,
+                min_value=1,
+                step=1,
                 key="mcr_n_components",
                 help="How many distinct emission species to resolve. Read it off the SVD scree.",
             )
@@ -149,7 +152,8 @@ def _render_mcr(left, right, loaded, all_datasets, da_map, ds, map_name):
             st.markdown('<p class="section-header">Constraints & Run</p>', unsafe_allow_html=True)
             st.caption("Non-negativity is always applied to both spectra and concentrations.")
             use_eq = st.checkbox(
-                "Fix one component to a reference spectrum", key="mcr_use_equality",
+                "Fix one component to a reference spectrum",
+                key="mcr_use_equality",
                 help=(
                     "Pin one component's spectrum to a measured reference — "
                     "e.g. a bare-substrate PL spectrum — anchoring the result "
@@ -164,15 +168,21 @@ def _render_mcr(left, right, loaded, all_datasets, da_map, ds, map_name):
                     st.warning("Load a reference file (e.g. a bare substrate) to use this.")
                 else:
                     ss_struct = st.session_state.get("sl_sample_structure", {})
-                    sub_files = [n for n in other_files
-                                 if ss_struct.get(n, {}).get("sample_type") == "substrate"]
+                    sub_files = [
+                        n
+                        for n in other_files
+                        if ss_struct.get(n, {}).get("sample_type") == "substrate"
+                    ]
                     candidates = sub_files + [n for n in other_files if n not in sub_files]
                     ref_file = st.selectbox(
-                        "Reference file", candidates, key="mcr_ref_file",
+                        "Reference file",
+                        candidates,
+                        key="mcr_ref_file",
                         format_func=lambda n: f"{n} — substrate" if n in sub_files else n,
                     )
                     equality_index = st.selectbox(
-                        "Apply to component", range(int(n_components)),
+                        "Apply to component",
+                        range(int(n_components)),
                         format_func=lambda i: f"Component {i + 1}",
                         key="mcr_equality_index",
                     )
@@ -182,7 +192,9 @@ def _render_mcr(left, right, loaded, all_datasets, da_map, ds, map_name):
 
             mcr_params = render_mcr_params()
             quant_amb = st.checkbox(
-                "Quantify rotational ambiguity", value=True, key="mcr_quant_amb",
+                "Quantify rotational ambiguity",
+                value=True,
+                key="mcr_quant_amb",
                 help=(
                     "Runs the feasible-band f_max − f_min analysis after the "
                     "fit — how uniquely each component is resolved. Adds a few "
@@ -196,7 +208,8 @@ def _render_mcr(left, right, loaded, all_datasets, da_map, ds, map_name):
             with st.spinner("Computing SVD scree…"):
                 try:
                     st.session_state["sl_mcr_rank"] = compute_mcr_rank_svd(
-                        da_map.values, random_state=mcr_params["random_state"],
+                        da_map.values,
+                        random_state=mcr_params["random_state"],
                     )
                 except ValueError as exc:
                     st.error(f"Could not compute SVD scree: {exc}")
@@ -229,7 +242,9 @@ def _render_mcr(left, right, loaded, all_datasets, da_map, ds, map_name):
         if mcr_result and mcr_result["file_name"] == map_name:
             _render_mcr_results(mcr_result, ds, map_name)
         elif mcr_result is not None:
-            st.caption(f"Last MCR-ALS result was for **{mcr_result['file_name']}** — run again for **{map_name}**.")
+            st.caption(
+                f"Last MCR-ALS result was for **{mcr_result['file_name']}** — run again for **{map_name}**."
+            )
 
         rank = st.session_state.get("sl_mcr_rank")
         if rank:
@@ -257,15 +272,19 @@ def _render_mcr_results(mcr_result, ds, map_name):
     )
 
     with tab_components:
-        comp_title = st.text_input("Chart title", value="Pure-Component Spectra", key="mcr_comp_title")
+        comp_title = st.text_input(
+            "Chart title", value="Pure-Component Spectra", key="mcr_comp_title"
+        )
         st_echarts(
             make_components_echarts(
                 mcr_result["components"],
                 mcr_result["spectral_coords"],
                 mcr_result["spectral_dim"],
                 title=comp_title,
-                x_unit=_X_UNIT, laser_nm=ds.laser_nm,
-                src_unit=ds.spectral_unit, native_type=ds.spectral_units,
+                x_unit=_X_UNIT,
+                laser_nm=ds.laser_nm,
+                src_unit=ds.spectral_unit,
+                native_type=ds.spectral_units,
             ),
             height="72vh",
         )
@@ -274,7 +293,8 @@ def _render_mcr_results(mcr_result, ds, map_name):
         n_comp = mcr_result["components"].shape[0]
         c_comp, c_display = st.columns([1, 2])
         comp_idx = c_comp.selectbox(
-            "Component", range(n_comp),
+            "Component",
+            range(n_comp),
             format_func=lambda i: f"Component {i + 1}",
             key="mcr_map_component_select",
         )
@@ -285,11 +305,15 @@ def _render_mcr_results(mcr_result, ds, map_name):
         row_coords = abundances.coords["row"].values
         col_coords = abundances.coords["column"].values
         fig = make_scalar_map_fig(
-            z, row_coords, col_coords,
-            ds.image_arr, ds.image_meta,
+            z,
+            row_coords,
+            col_coords,
+            ds.image_arr,
+            ds.image_meta,
             cbar_label=f"Component {comp_idx + 1} concentration",
             title=f"{map_name} — Component {comp_idx + 1}",
-            colorscale=colorscale, map_opacity=map_opacity,
+            colorscale=colorscale,
+            map_opacity=map_opacity,
         )
         st.plotly_chart(fig, width="stretch", height=550)
 
@@ -380,8 +404,10 @@ def _render_ambiguity_tab(mcr_result, ds):
                 mcr_result["spectral_coords"],
                 mcr_result["spectral_dim"],
                 title="Feasible-band boundary spectra",
-                x_unit=_X_UNIT, laser_nm=ds.laser_nm,
-                src_unit=ds.spectral_unit, native_type=ds.spectral_units,
+                x_unit=_X_UNIT,
+                laser_nm=ds.laser_nm,
+                src_unit=ds.spectral_unit,
+                native_type=ds.spectral_units,
             ),
             height="60vh",
         )
@@ -395,7 +421,11 @@ def _render_nmf(left, right, da_map, ds, map_name):
         with st.container(border=True):
             st.markdown('<p class="section-header">Diagnostic Curve</p>', unsafe_allow_html=True)
             k_max = st.number_input(
-                "Max components to test", value=8, min_value=2, max_value=20, step=1,
+                "Max components to test",
+                value=8,
+                min_value=2,
+                max_value=20,
+                step=1,
                 key="nmf_kmax",
                 help=(
                     "Fits NMF for 1..this many components and plots how "
@@ -408,12 +438,17 @@ def _render_nmf(left, right, da_map, ds, map_name):
         with st.container(border=True):
             st.markdown('<p class="section-header">Decomposition</p>', unsafe_allow_html=True)
             n_components = st.number_input(
-                "n_components (k)", value=3, min_value=1, step=1,
+                "n_components (k)",
+                value=3,
+                min_value=1,
+                step=1,
                 key="nmf_n_components",
                 help="Pick this using the diagnostic curve above — there is no automatic/hidden k selection.",
             )
             nmf_params = render_nmf_params()
-            run_decompose = st.button("Run NMF decomposition", key="nmf_run_decompose", type="primary")
+            run_decompose = st.button(
+                "Run NMF decomposition", key="nmf_run_decompose", type="primary"
+            )
 
     with right:
         if run_diag:
@@ -461,15 +496,19 @@ def _render_nmf(left, right, da_map, ds, map_name):
             )
 
             with tab_components:
-                comp_title = st.text_input("Chart title", value="Component Spectra", key="nmf_comp_title")
+                comp_title = st.text_input(
+                    "Chart title", value="Component Spectra", key="nmf_comp_title"
+                )
                 st_echarts(
                     make_components_echarts(
                         nmf_result["components"],
                         nmf_result["spectral_coords"],
                         nmf_result["spectral_dim"],
                         title=comp_title,
-                        x_unit=_X_UNIT, laser_nm=ds.laser_nm,
-                        src_unit=ds.spectral_unit, native_type=ds.spectral_units,
+                        x_unit=_X_UNIT,
+                        laser_nm=ds.laser_nm,
+                        src_unit=ds.spectral_unit,
+                        native_type=ds.spectral_units,
                     ),
                     height="72vh",
                 )
@@ -478,7 +517,8 @@ def _render_nmf(left, right, da_map, ds, map_name):
                 n_comp = nmf_result["components"].shape[0]
                 c_comp, c_display = st.columns([1, 2])
                 comp_idx = c_comp.selectbox(
-                    "Component", range(n_comp),
+                    "Component",
+                    range(n_comp),
                     format_func=lambda i: f"Component {i + 1}",
                     key="nmf_map_component_select",
                 )
@@ -489,11 +529,15 @@ def _render_nmf(left, right, da_map, ds, map_name):
                 row_coords = abundances.coords["row"].values
                 col_coords = abundances.coords["column"].values
                 fig = make_scalar_map_fig(
-                    z, row_coords, col_coords,
-                    ds.image_arr, ds.image_meta,
+                    z,
+                    row_coords,
+                    col_coords,
+                    ds.image_arr,
+                    ds.image_meta,
                     cbar_label=f"Component {comp_idx + 1} abundance",
                     title=f"{map_name} — Component {comp_idx + 1}",
-                    colorscale=colorscale, map_opacity=map_opacity,
+                    colorscale=colorscale,
+                    map_opacity=map_opacity,
                 )
                 st.plotly_chart(fig, width="stretch", height=550)
 
@@ -525,12 +569,16 @@ def _render_nmf(left, right, da_map, ds, map_name):
                     key="nmf_export_npz",
                 )
         elif nmf_result is not None:
-            st.caption(f"Last NMF result was for **{nmf_result['file_name']}** — run again for **{map_name}**.")
+            st.caption(
+                f"Last NMF result was for **{nmf_result['file_name']}** — run again for **{map_name}**."
+            )
 
         diag = st.session_state.get("sl_nmf_diagnostic")
         if diag:
             st.divider()
-            diag_title = st.text_input("Chart title", value="NMF Diagnostic Curve", key="nmf_diag_title")
+            diag_title = st.text_input(
+                "Chart title", value="NMF Diagnostic Curve", key="nmf_diag_title"
+            )
             st_echarts(make_nmf_diagnostic_echarts(diag, title=diag_title), height="72vh")
             n_not_converged = sum(1 for c in diag["converged"] if not c)
             if n_not_converged:

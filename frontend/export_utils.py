@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Helpers that pack analysis results into .npz bytes for st.download_button."""
 
 from __future__ import annotations
@@ -47,9 +46,9 @@ def mean_spectrum_to_npz(da: xr.DataArray) -> bytes:
 def nmf_to_npz(nmf_result: dict) -> bytes:
     ab = nmf_result["abundances"]
     arrays = {
-        "components":    nmf_result["components"],
+        "components": nmf_result["components"],
         "spectral_axis": nmf_result["spectral_coords"],
-        "abundances":    ab.values,
+        "abundances": ab.values,
     }
     for dim in ab.dims[:-1]:  # spatial dims, skip "component"
         if dim in ab.coords:
@@ -65,10 +64,10 @@ def mcr_to_npz(mcr_result: dict) -> bytes:
     ab = mcr_result["abundances"]
     meta = mcr_result.get("meta", {})
     arrays = {
-        "components":    mcr_result["components"],   # S (k, n_spectral)
+        "components": mcr_result["components"],  # S (k, n_spectral)
         "spectral_axis": mcr_result["spectral_coords"],
-        "concentrations": ab.values,                 # C (spatial..., k)
-        "lof":           np.asarray(meta.get("lof", np.nan)),
+        "concentrations": ab.values,  # C (spatial..., k)
+        "lof": np.asarray(meta.get("lof", np.nan)),
     }
     for dim in ab.dims[:-1]:  # spatial dims, skip "component"
         if dim in ab.coords:
@@ -86,9 +85,9 @@ def mcr_to_npz(mcr_result: dict) -> bytes:
 def fit_curves_to_npz(fit_result) -> bytes:
     arrays = {
         "spectral_axis": fit_result.x,
-        "y_data":        fit_result.y_data,
-        "y_fit":         fit_result.y_fit,
-        "residual":      fit_result.residual,
+        "y_data": fit_result.y_data,
+        "y_fit": fit_result.y_fit,
+        "residual": fit_result.residual,
     }
     for band in fit_result.bands:
         arrays[f"band_{band.label.replace(' ', '_')}"] = band.curve
@@ -99,11 +98,11 @@ def fit_curves_to_npz(fit_result) -> bytes:
 
 def batch_fit_to_npz(batch_result, labels: list[str], row_coords, col_coords) -> bytes:
     arrays = {
-        "row_coords":         row_coords,
-        "col_coords":         col_coords,
-        "r_squared":          batch_result.r_squared_map,
+        "row_coords": row_coords,
+        "col_coords": col_coords,
+        "r_squared": batch_result.r_squared_map,
         "reduced_chi_square": batch_result.reduced_chi_square_map,
-        "success":            batch_result.success_map,
+        "success": batch_result.success_map,
     }
     for label in labels:
         for param, arr in batch_result.band_results[label].items():

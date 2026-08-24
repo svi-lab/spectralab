@@ -40,7 +40,9 @@ def _clean_pl() -> np.ndarray:
     return gaussian_peak_1d(N, PL_CENTER, PL_FWHM, PL_AMP, BASELINE)
 
 
-def _remaining_spike_frac(corrected: np.ndarray, clean: np.ndarray, start: int, width: int) -> float:
+def _remaining_spike_frac(
+    corrected: np.ndarray, clean: np.ndarray, start: int, width: int
+) -> float:
     """Peak leftover spike height in the CR window, as a fraction of CR_HEIGHT."""
     region = corrected[start : start + width] - clean[start : start + width]
     return float(np.max(region) / CR_HEIGHT)

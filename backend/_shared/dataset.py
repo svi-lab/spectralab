@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Typed container for a single loaded WDF file."""
 
 from __future__ import annotations
@@ -9,9 +8,7 @@ from typing import Any
 import numpy as np
 import xarray as xr
 
-_KNOWN_UNITS = frozenset(
-    {"RamanShift", "Wavenumber", "Nanometer", "ElectronVolt"}
-)
+_KNOWN_UNITS = frozenset({"RamanShift", "Wavenumber", "Nanometer", "ElectronVolt"})
 
 
 def validate_spectral_dataset(da: xr.DataArray, spectral_units: str) -> tuple[bool, str]:
@@ -32,24 +29,24 @@ class SpectralDataset:
     in place after construction.  All preprocessing returns new DataArrays.
     """
 
-    da:             xr.DataArray
-    spectral_dim:   str
-    spectral_units: str        # WiRE canonical: "Nanometer"|"ElectronVolt"|"RamanShift"|"Wavenumber"
-    spectral_unit:  str        # coord units string: "nm"|"eV"|"1/cm"|"cm^-1"
-    spec_min:       float
-    spec_max:       float
-    laser_nm:       float | None
-    is_map:         bool
-    image_arr:      np.ndarray | None
-    image_meta:     dict[str, Any] | None
-    laser_power:    float              # NaN if not reported
-    exposure_time:  float              # NaN if not reported
-    comment:        str                # "" if not present
-    dims:           tuple
-    shape:          tuple
-    ndim:           int
-    is_valid:       bool
-    validation_msg: str                # "" when valid
+    da: xr.DataArray
+    spectral_dim: str
+    spectral_units: str  # WiRE canonical: "Nanometer"|"ElectronVolt"|"RamanShift"|"Wavenumber"
+    spectral_unit: str  # coord units string: "nm"|"eV"|"1/cm"|"cm^-1"
+    spec_min: float
+    spec_max: float
+    laser_nm: float | None
+    is_map: bool
+    image_arr: np.ndarray | None
+    image_meta: dict[str, Any] | None
+    laser_power: float  # NaN if not reported
+    exposure_time: float  # NaN if not reported
+    comment: str  # "" if not present
+    dims: tuple
+    shape: tuple
+    ndim: int
+    is_valid: bool
+    validation_msg: str  # "" when valid
 
     @property
     def measurement_kind(self) -> str:

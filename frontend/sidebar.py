@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Shared sidebar: file upload, loading, and validation. Runs on every page."""
 
 from __future__ import annotations
@@ -7,8 +6,8 @@ from typing import Any
 
 import streamlit as st
 
-from backend.pipeline import load_wdf
 from backend._shared.dataset import SpectralDataset
+from backend.pipeline import load_wdf
 from frontend.session import clear_analysis_state
 
 

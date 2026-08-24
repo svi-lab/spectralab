@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Laser-line notches: Nd:YAG harmonics and grating 2nd-order artifacts.
 
 Both are broad features (not cosmic-ray spikes) removed by locating a peak
@@ -8,7 +7,8 @@ near a target wavelength and linearly interpolating a narrow notch across it.
 from __future__ import annotations
 
 import re
-from typing import Any, Callable, Mapping
+from collections.abc import Callable, Mapping
+from typing import Any
 
 import numpy as np
 import xarray as xr
@@ -18,6 +18,7 @@ from _shared._spectral import (
     transpose_spectral_last,
     with_new_values,
 )
+
 from .mask_1d import linear_interpolate_masked_channels_1d
 
 # Excitation laser in air; third harmonic of ~1064 nm Nd:YAG.
@@ -185,9 +186,7 @@ def _notch_target_wavelength(
     imax = int(idx_candidates[rel_imax])
     peak_x = float(x[imax])
 
-    notch_lo, notch_hi = _notch_interval_in_axis_units(
-        peak_x, wavenumber_axis=wavenumber_axis
-    )
+    notch_lo, notch_hi = _notch_interval_in_axis_units(peak_x, wavenumber_axis=wavenumber_axis)
     if notch_lo == notch_hi:
         return y_work, None
     remove_mask = _spectral_coord_in_interval_mask(x, notch_lo, notch_hi)

@@ -28,16 +28,17 @@ st.markdown(f"<style>{_style_path.read_text()}</style>", unsafe_allow_html=True)
 # Named page objects — referenced by _render_step_bar for st.switch_page
 # ---------------------------------------------------------------------------
 
-_page_data           = st.Page(render_data_page,            title="Data",
-                                icon=":material/description:", default=True)
-_page_preprocessing  = st.Page(render_preprocessing_page,  title="Preprocessing",
-                                icon=":material/tune:")
-_page_decomposition  = st.Page(render_decomposition_page,  title="Decomposition",
-                                icon=":material/category:")
-_page_deconvolution  = st.Page(render_deconvolution_page,  title="Deconvolution",
-                                icon=":material/timeline:")
-_page_map            = st.Page(render_map_page,             title="Map Analysis",
-                                icon=":material/map:")
+_page_data = st.Page(render_data_page, title="Data", icon=":material/description:", default=True)
+_page_preprocessing = st.Page(
+    render_preprocessing_page, title="Preprocessing", icon=":material/tune:"
+)
+_page_decomposition = st.Page(
+    render_decomposition_page, title="Decomposition", icon=":material/category:"
+)
+_page_deconvolution = st.Page(
+    render_deconvolution_page, title="Deconvolution", icon=":material/timeline:"
+)
+_page_map = st.Page(render_map_page, title="Map Analysis", icon=":material/map:")
 
 pg = st.navigation(
     [_page_data, _page_preprocessing, _page_decomposition, _page_deconvolution, _page_map],
@@ -54,11 +55,11 @@ def _render_step_bar(pg) -> None:
     that occurred with the old disabled-button approach.
     """
     _steps = [
-        (_page_data,          "Data"),
+        (_page_data, "Data"),
         (_page_preprocessing, "Preprocessing"),
         (_page_decomposition, "Decomposition"),
         (_page_deconvolution, "Deconvolution"),
-        (_page_map,           "Map Analysis"),
+        (_page_map, "Map Analysis"),
     ]
     current_idx = next((i for i, (page, _) in enumerate(_steps) if page is pg), 0)
     st.markdown(
@@ -88,7 +89,7 @@ if not has_files:
         '<div class="sl-hero">'
         '<h1 class="sl-hero-title">SpectraLab</h1>'
         '<p class="sl-hero-subtitle">&larr; Upload a file in the sidebar to start analysis</p>'
-        '</div>',
+        "</div>",
         unsafe_allow_html=True,
     )
 else:

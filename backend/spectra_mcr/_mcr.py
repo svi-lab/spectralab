@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """MCR-ALS (Multivariate Curve Resolution — Alternating Least Squares).
 
 Resolves a population of spectra ``D`` (pixels x channels) into a small number
@@ -30,7 +29,8 @@ See :class:`spectra_mcr.MCRDecomposer` for the user-facing xarray API.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 from scipy.optimize import minimize, nnls
@@ -78,8 +78,7 @@ def compute_mcr_rank_svd(
     n_valid = D.shape[0]
     if n_valid < 2:
         raise ValueError(
-            "compute_mcr_rank_svd needs at least 2 valid (non-NaN) spectra; "
-            f"got n_valid={n_valid}"
+            f"compute_mcr_rank_svd needs at least 2 valid (non-NaN) spectra; got n_valid={n_valid}"
         )
 
     svals = np.linalg.svd(D, compute_uv=False)
@@ -135,10 +134,10 @@ def _simplisma(
         if c == 0:
             weight = np.ones(m)
         else:
-            Sel = Dn[pure_idx]                       # (c, n)
-            G_ss = Sel @ Sel.T / n                   # (c, c)
-            G_ss = G_ss + 1e-9 * np.eye(c)           # ridge for stability
-            g_si = Sel @ Dn.T / n                    # (c, m)
+            Sel = Dn[pure_idx]  # (c, n)
+            G_ss = Sel @ Sel.T / n  # (c, c)
+            G_ss = G_ss + 1e-9 * np.eye(c)  # ridge for stability
+            g_si = Sel @ Dn.T / n  # (c, m)
             inv_Gss = np.linalg.inv(G_ss)
             quad = np.einsum("ji,jk,ki->i", g_si, inv_Gss, g_si)
             # Schur complement = novelty of each candidate vs the selected set.
@@ -222,10 +221,7 @@ def mcr_als(
     if n_components < 1:
         raise ValueError(f"n_components must be >= 1, got {n_components}")
     if n_components > n_spectra:
-        raise ValueError(
-            f"n_components ({n_components}) cannot exceed n_spectra "
-            f"({n_spectra})"
-        )
+        raise ValueError(f"n_components ({n_components}) cannot exceed n_spectra ({n_spectra})")
 
     # Only D_valid is ever fitted — see the ALS loop below for why the
     # median-filled invalid rows must stay out of both half-steps.
@@ -246,14 +242,10 @@ def mcr_als(
     if use_equality:
         eq = np.clip(np.asarray(equality_spectrum, dtype=float), 0, None)
         if eq.shape[-1] != n_spectral:
-            raise ValueError(
-                f"equality_spectrum length {eq.shape[-1]} != n_spectral "
-                f"{n_spectral}"
-            )
+            raise ValueError(f"equality_spectrum length {eq.shape[-1]} != n_spectral {n_spectral}")
         if not (0 <= equality_index < n_components):
             raise ValueError(
-                f"equality_index {equality_index} out of range for "
-                f"n_components {n_components}"
+                f"equality_index {equality_index} out of range for n_components {n_components}"
             )
         S[equality_index] = eq
 
@@ -302,9 +294,7 @@ def mcr_als(
     reconstructed = reconstructed_rows.reshape(spatial_shape + (n_spectral,))
 
     fraction_var_explained = (
-        1.0 - (float(np.sum((D_valid - (C_valid @ S)) ** 2)) / d_sq)
-        if d_sq > 0
-        else float("nan")
+        1.0 - (float(np.sum((D_valid - (C_valid @ S)) ** 2)) / d_sq) if d_sq > 0 else float("nan")
     )
 
     constraints = ["nonneg-C", "nonneg-S"]
@@ -390,8 +380,8 @@ def compute_mcr_ambiguity(
 
     # Rank-k SVD model: A = U Σ (m x k), Vt (k x n). Feasible C = A T, S = Ti Vt.
     U, s, Vt = np.linalg.svd(D, full_matrices=False)
-    A = U[:, :k] * s[:k]          # (m, k)
-    Vt = Vt[:k, :]                # (k, n)
+    A = U[:, :k] * s[:k]  # (m, k)
+    Vt = Vt[:k, :]  # (k, n)
     sigma_norm = float(np.sqrt(np.sum(s[:k] ** 2)))
     if sigma_norm == 0:
         return {"ok": False, "reason": "degenerate (zero singular values)"}
@@ -415,8 +405,8 @@ def compute_mcr_ambiguity(
             Ti = np.linalg.inv(T)
         except np.linalg.LinAlgError:
             return np.full(A.shape[0] * k + k * Vt.shape[1], -1e6)
-        C_new = A @ T                # (m, k) >= 0
-        S_new = Ti @ Vt              # (k, n) >= 0
+        C_new = A @ T  # (m, k) >= 0
+        S_new = Ti @ Vt  # (k, n) >= 0
         return np.concatenate([C_new.ravel(), S_new.ravel()])
 
     cons = ({"type": "ineq", "fun": _nonneg_constraints},)
@@ -438,12 +428,18 @@ def compute_mcr_ambiguity(
     for i in range(k):
         try:
             r_min = minimize(
-                lambda t, i=i: _f_i(t, i), x0, method="SLSQP",
-                constraints=cons, options={"maxiter": slsqp_maxiter, "ftol": 1e-6},
+                lambda t, i=i: _f_i(t, i),
+                x0,
+                method="SLSQP",
+                constraints=cons,
+                options={"maxiter": slsqp_maxiter, "ftol": 1e-6},
             )
             r_max = minimize(
-                lambda t, i=i: -_f_i(t, i), x0, method="SLSQP",
-                constraints=cons, options={"maxiter": slsqp_maxiter, "ftol": 1e-6},
+                lambda t, i=i: -_f_i(t, i),
+                x0,
+                method="SLSQP",
+                constraints=cons,
+                options={"maxiter": slsqp_maxiter, "ftol": 1e-6},
             )
             if r_min.success and np.isfinite(r_min.fun):
                 f_min[i] = float(r_min.fun)

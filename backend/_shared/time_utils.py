@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Datetime formatting helpers shared across the package."""
 
 from __future__ import annotations

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """High-level per-spectrum smoothing: :class:`SpectraSmoother`.
 
 Applies Savitzky-Golay or Whittaker-Eilers filtering independently to every
@@ -22,6 +21,7 @@ from _shared._spectral import (
     with_new_values,
 )
 from _shared.utils import ensure_in_memory
+
 from ._smooth_1d import auto_lam, savgol_smooth_1d, whittaker_smooth_1d
 
 SmoothMethod = Literal["savgol", "whittaker", "wavelet"]
@@ -74,26 +74,19 @@ class SpectraSmoother:
     def __post_init__(self) -> None:
         allowed: tuple[str, ...] = ("savgol", "whittaker", "wavelet")
         if self.method not in allowed:
-            raise ValueError(
-                f"method must be one of {allowed!r}; got {self.method!r}"
-            )
+            raise ValueError(f"method must be one of {allowed!r}; got {self.method!r}")
         if self.window_length % 2 == 0 or self.window_length < 3:
-            raise ValueError(
-                f"window_length must be odd and >= 3; got {self.window_length}"
-            )
+            raise ValueError(f"window_length must be odd and >= 3; got {self.window_length}")
         if self.polyorder >= self.window_length:
             raise ValueError(
-                f"polyorder ({self.polyorder}) must be < "
-                f"window_length ({self.window_length})"
+                f"polyorder ({self.polyorder}) must be < window_length ({self.window_length})"
             )
         if self.lam is not None and self.lam <= 0:
             raise ValueError(f"lam must be positive; got {self.lam}")
         if self.d < 1:
             raise ValueError(f"d must be >= 1; got {self.d}")
         if self.auto_lam_calls < 1:
-            raise ValueError(
-                f"auto_lam_calls must be >= 1; got {self.auto_lam_calls}"
-            )
+            raise ValueError(f"auto_lam_calls must be >= 1; got {self.auto_lam_calls}")
 
     # ------------------------------------------------------------------
     # Public API
@@ -107,8 +100,7 @@ class SpectraSmoother:
         """
         if not isinstance(spectrum, xr.DataArray):
             raise TypeError(
-                "SpectraSmoother.smooth expects an xarray.DataArray; got "
-                f"{type(spectrum).__name__}"
+                f"SpectraSmoother.smooth expects an xarray.DataArray; got {type(spectrum).__name__}"
             )
         cleaned, meta = self._smooth_core(spectrum)
         return with_new_values(spectrum, cleaned, _TREATMENT_KEY, meta)
@@ -121,9 +113,7 @@ class SpectraSmoother:
     # Internal helpers (also used by SpectraCleaner)
     # ------------------------------------------------------------------
 
-    def _smooth_core(
-        self, spectra: xr.DataArray
-    ) -> tuple[np.ndarray, dict[str, Any]]:
+    def _smooth_core(self, spectra: xr.DataArray) -> tuple[np.ndarray, dict[str, Any]]:
         """Validate, load, smooth, and return ``(cleaned_array, meta)``.
 
         The returned array has the same shape as ``spectra.values``.
@@ -162,9 +152,7 @@ class SpectraSmoother:
 
         return cleaned, meta
 
-    def _smooth_rows(
-        self, row_stack: np.ndarray
-    ) -> tuple[np.ndarray, dict[str, Any]]:
+    def _smooth_rows(self, row_stack: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
         """Apply the smoother to every row of ``(n_spectra, n_spectral)``.
 
         Returns ``(cleaned_rows, meta)``.  When ``lam=None`` for the
@@ -189,9 +177,7 @@ class SpectraSmoother:
                 if has_nan and nan_row_mask[i]:
                     cleaned[i] = np.nan
                 else:
-                    cleaned[i] = savgol_smooth_1d(
-                        row_stack[i], self.window_length, self.polyorder
-                    )
+                    cleaned[i] = savgol_smooth_1d(row_stack[i], self.window_length, self.polyorder)
 
         elif self.method == "whittaker":
             meta["d"] = self.d
@@ -202,10 +188,10 @@ class SpectraSmoother:
             else:
                 # Estimate λ once from valid spectra only — NaN rows would
                 # corrupt the channel-wise mean and break GCV.
-                mean_spec = valid_rows.mean(axis=0) if valid_rows.shape[0] > 0 else np.zeros(n_spectral)
-                lam_used = auto_lam(
-                    mean_spec, d=self.d, max_calls=self.auto_lam_calls
+                mean_spec = (
+                    valid_rows.mean(axis=0) if valid_rows.shape[0] > 0 else np.zeros(n_spectral)
                 )
+                lam_used = auto_lam(mean_spec, d=self.d, max_calls=self.auto_lam_calls)
                 meta["lam_used"] = lam_used
                 meta["lam_auto"] = True
                 meta["auto_lam_calls"] = self.auto_lam_calls
@@ -214,12 +200,11 @@ class SpectraSmoother:
                 if has_nan and nan_row_mask[i]:
                     cleaned[i] = np.nan
                 else:
-                    cleaned[i] = whittaker_smooth_1d(
-                        row_stack[i], lam_used, self.d
-                    )
+                    cleaned[i] = whittaker_smooth_1d(row_stack[i], lam_used, self.d)
 
         else:  # wavelet
             from ._smooth_1d import wavelet_smooth_1d
+
             meta["wavelet"] = self.wavelet
             meta["wavelet_level"] = self.wavelet_level
             meta["wavelet_threshold"] = self.wavelet_threshold

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Oversaturation detection and removal: :class:`CleanData`."""
 
 from __future__ import annotations
@@ -74,9 +73,7 @@ class CleanData:
 
         # Transpose so spectral is always last for consistent detection
         spatial_dims = [d for d in da.dims if d != sdim]
-        da_sl = (
-            da.transpose(*spatial_dims, sdim) if da.dims[-1] != sdim else da
-        )
+        da_sl = da.transpose(*spatial_dims, sdim) if da.dims[-1] != sdim else da
 
         # Detection only compares to zero — keep the reader's native dtype
         # instead of forcing a full float64 copy of the whole array.
@@ -92,13 +89,9 @@ class CleanData:
         if da.ndim == 1:
             return self._handle_1d(da, filename)
         if da.ndim == 2:
-            return self._handle_2d(
-                da_sl, bad_mask, sdim, spatial_dims[0], filename, n_bad
-            )
+            return self._handle_2d(da_sl, bad_mask, sdim, spatial_dims[0], filename, n_bad)
         if da.ndim == 3:
-            return self._handle_3d(
-                da_sl, bad_mask, sdim, spatial_dims, filename, n_bad
-            )
+            return self._handle_3d(da_sl, bad_mask, sdim, spatial_dims, filename, n_bad)
 
         warnings.warn(
             f"Oversaturated spectra detected in '{filename}' but "
@@ -132,7 +125,7 @@ class CleanData:
             return bad
 
         cs = np.cumsum(is_zero[candidates], axis=1, dtype=np.int32)
-        win = cs[:, n - 1:].copy()
+        win = cs[:, n - 1 :].copy()
         win[:, 1:] -= cs[:, :-n]
         bad[candidates] = np.any(win >= n, axis=1)
         return bad
@@ -225,16 +218,8 @@ class CleanData:
             )
             return da
 
-        y_all = (
-            da.coords[y_dim].values
-            if y_dim in da.coords
-            else np.arange(ny, dtype=float)
-        )
-        x_all = (
-            da.coords[x_dim].values
-            if x_dim in da.coords
-            else np.arange(nx, dtype=float)
-        )
+        y_all = da.coords[y_dim].values if y_dim in da.coords else np.arange(ny, dtype=float)
+        x_all = da.coords[x_dim].values if x_dim in da.coords else np.arange(nx, dtype=float)
 
         removed_positions = [
             {
