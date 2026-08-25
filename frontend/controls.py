@@ -28,6 +28,37 @@ CRR_ENGINE_2D3D = "2D / 3D — collection & spatial"
 DENOISE_ENGINE_PCA = "PCA — population-based"
 DENOISE_ENGINE_SMOOTHER = "Smoother — per spectrum"
 
+# Defaults for keyed preprocessing widgets. Seed into session state before
+# rendering — never pass ``value=`` on the same keys (Streamlit warns when
+# both are used in one run). ``_restore_widget_state`` overwrites from
+# ``sl_pipeline_params`` when the user navigates back to this page.
+PIPELINE_WIDGET_DEFAULTS: dict[str, Any] = {
+    "cd_n_zeros": 10,
+    "crr_spike_width": 5,
+    "crr_spike_threshold": 3.5,
+    "crr_spike_passes": 3,
+    "crr_map_sensitivity": 0.01,
+    "crr_map_disk_radius": 3,
+    "crr_map_spike_width": 5,
+    "crr_map_n_components": 3,
+    "denoise_nc_int": 2,
+    "denoise_sm_window_length": 11,
+    "denoise_sm_polyorder": 3,
+    "denoise_sm_auto_lam": True,
+    "denoise_sm_lam": 100.0,
+    "denoise_sm_auto_lam_calls": 5,
+    "denoise_sm_d": 2,
+    "denoise_sm_wavelet_level": 0,
+}
+
+
+def ensure_pipeline_widget_defaults() -> None:
+    """Seed preprocessing widget keys when missing (before restore or render)."""
+    ss = st.session_state
+    for key, val in PIPELINE_WIDGET_DEFAULTS.items():
+        if key not in ss:
+            ss[key] = val
+
 
 def render_axis_controls(
     key_prefix: str,
@@ -93,7 +124,6 @@ def render_clean_data_params() -> dict[str, Any]:
     """Render CleanData parameter widget. Returns cd_params dict."""
     n_zeros = st.number_input(
         "Consecutive zeros to flag",
-        value=10,
         min_value=1,
         step=1,
         key="cd_n_zeros",
@@ -131,7 +161,6 @@ def render_crr_params() -> dict[str, Any]:
         col1, col2 = st.columns(2)
         spike_width = col1.number_input(
             "Spike width (channels, odd)",
-            value=5,
             min_value=3,
             step=2,
             key="crr_spike_width",
@@ -145,7 +174,6 @@ def render_crr_params() -> dict[str, Any]:
             spike_width += 1
         spike_threshold = col2.number_input(
             "Detection threshold",
-            value=3.5,
             min_value=0.1,
             step=0.5,
             key="crr_spike_threshold",
@@ -157,7 +185,6 @@ def render_crr_params() -> dict[str, Any]:
         )
         spike_passes = st.number_input(
             "Passes",
-            value=3,
             min_value=1,
             step=1,
             key="crr_spike_passes",
@@ -180,7 +207,6 @@ def render_crr_params() -> dict[str, Any]:
             c1, c2 = st.columns(2)
             map_sensitivity = c1.number_input(
                 "Sensitivity",
-                value=0.01,
                 min_value=1e-4,
                 step=0.005,
                 format="%.4f",
@@ -194,7 +220,6 @@ def render_crr_params() -> dict[str, Any]:
             )
             map_disk_radius = c2.number_input(
                 "Neighbourhood radius (pixels)",
-                value=3,
                 min_value=1,
                 step=1,
                 key="crr_map_disk_radius",
@@ -206,7 +231,6 @@ def render_crr_params() -> dict[str, Any]:
             )
             map_spike_width = c1.number_input(
                 "Spike width (channels)",
-                value=5,
                 min_value=1,
                 step=1,
                 key="crr_map_spike_width",
@@ -229,7 +253,6 @@ def render_crr_params() -> dict[str, Any]:
             )
             map_n_components = st.number_input(
                 "PCA components",
-                value=3,
                 min_value=1,
                 step=1,
                 key="crr_map_n_components",
@@ -302,7 +325,6 @@ def render_denoising_params() -> dict[str, Any]:
             if nc_type == "int":
                 nc_int = st.number_input(
                     "Component count",
-                    value=2,
                     min_value=1,
                     step=1,
                     key="denoise_nc_int",
@@ -363,7 +385,6 @@ def render_denoising_params() -> dict[str, Any]:
                 sc1, sc2 = st.columns(2)
                 sm_wl = sc1.number_input(
                     "Window size (points, odd)",
-                    value=11,
                     min_value=3,
                     step=2,
                     key="denoise_sm_window_length",
@@ -377,7 +398,6 @@ def render_denoising_params() -> dict[str, Any]:
                     sm_wl += 1
                 sm_po = sc2.number_input(
                     "Polynomial order",
-                    value=3,
                     min_value=1,
                     max_value=int(sm_wl) - 1,
                     step=1,
@@ -401,7 +421,6 @@ def render_denoising_params() -> dict[str, Any]:
             elif sm_method == "whittaker":
                 use_auto_lam = st.checkbox(
                     "Automatic smoothness (recommended)",
-                    value=True,
                     key="denoise_sm_auto_lam",
                     help=(
                         "Picks the smoothness λ automatically by generalised "
@@ -414,7 +433,6 @@ def render_denoising_params() -> dict[str, Any]:
                 if not use_auto_lam:
                     sm_lam = sc1.number_input(
                         "Smoothness (λ)",
-                        value=100.0,
                         min_value=0.001,
                         step=10.0,
                         key="denoise_sm_lam",
@@ -427,7 +445,6 @@ def render_denoising_params() -> dict[str, Any]:
                 else:
                     sm_alc = st.number_input(
                         "Search steps for automatic λ",
-                        value=5,
                         min_value=1,
                         step=1,
                         key="denoise_sm_auto_lam_calls",
@@ -439,7 +456,6 @@ def render_denoising_params() -> dict[str, Any]:
                     )
                 sm_d = sc2.number_input(
                     "Difference order",
-                    value=2,
                     min_value=1,
                     step=1,
                     key="denoise_sm_d",
@@ -485,7 +501,6 @@ def render_denoising_params() -> dict[str, Any]:
                 )
                 wv_level = st.number_input(
                     "Decomposition level (0 = auto)",
-                    value=0,
                     min_value=0,
                     step=1,
                     key="denoise_sm_wavelet_level",

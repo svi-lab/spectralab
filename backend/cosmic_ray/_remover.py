@@ -308,6 +308,9 @@ class CosmicRayRemover:
         masks = np.zeros_like(flat, dtype=bool) if want_diagnostics else None
         n_corrected = 0
         for i, row in enumerate(flat):
+            if np.all(np.isnan(row)):
+                out_flat[i] = row
+                continue
             corrected, mask = remove_cosmic_rays_1d(
                 row,
                 kernel_size=self.spike_width,

@@ -71,6 +71,7 @@ from ..controls import (
     UNIT_DEFAULT,
     X_UNIT_FMT,
     X_UNIT_OPTIONS,
+    ensure_pipeline_widget_defaults,
     render_axis_controls,
     render_clean_data_params,
     render_crr_params,
@@ -1341,6 +1342,7 @@ def render_preprocessing_page() -> None:
         st.info("Upload files in the sidebar to get started.")
         st.stop()
 
+    ensure_pipeline_widget_defaults()
     _restore_widget_state()
 
     processing_ok: bool = st.session_state.get("sl_processing_ok", False)
