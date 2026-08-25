@@ -28,13 +28,19 @@ Session state
 Caches
 ------
 ``_draw_overlay_cached``  — scan-overlay RGB render, keyed on file hash.
-``_full_npz_cached`` / ``_mean_npz_cached`` — export payloads, keyed on
-file hash + pipeline params.
+
+Export payloads are deliberately **not** cached and **not** built at render
+time: every download button passes a callable (Streamlit's deferred-download
+path), so the CSV / .npz bytes are generated only when the user actually
+clicks. Building them eagerly kept multi-hundred-MB strings resident in
+``st.cache_data`` and re-hashed them on every rerun, which slowed the whole
+app down after visiting this page.
 """
 
 from __future__ import annotations
 
 import math
+from functools import partial
 
 import numpy as np
 import streamlit as st
@@ -48,7 +54,12 @@ from backend.optics import (
     lookup_substrate_nk,
 )
 
-from ..export_utils import mean_spectrum_to_npz, spectra_to_npz
+from ..export_utils import (
+    mean_spectrum_to_csv,
+    mean_spectrum_to_npz,
+    spectra_to_csv,
+    spectra_to_npz,
+)
 from ..pipeline_cache import default_pipeline_params, final_da, get_finals
 
 # ───────────────────────────── Cached helpers ─────────────────────────────
@@ -62,19 +73,6 @@ def _draw_overlay_cached(
     _geo: ScanGeometry,
 ) -> np.ndarray:
     return draw_scan_overlay(_image_arr, image_meta, _geo, removed_mask=None)
-
-
-@st.cache_data(show_spinner=False, max_entries=16)
-def _full_npz_cached(file_hash: str, pipeline_params: dict, _da, excluded_mask=None) -> bytes:
-    # excluded_mask is hashed (no underscore prefix) so the payload is rebuilt
-    # when the user edits the mask; pipeline_params carries it too, but only as
-    # part of a dict whose other keys change independently.
-    return spectra_to_npz(_da, excluded_mask)
-
-
-@st.cache_data(show_spinner=False, max_entries=16)
-def _mean_npz_cached(file_hash: str, pipeline_params: dict, _da) -> bytes:
-    return mean_spectrum_to_npz(_da)
 
 
 # ─────────────────────────────── File info ────────────────────────────────
@@ -418,41 +416,80 @@ def _pipeline_export_caption(params: dict | None) -> str:
     if params.get("cd_enabled"):
         stages.append("clean data")
     if params.get("crr_enabled"):
-        stages.append("CRR")
+        stages.append("cosmic ray removal")
     if params.get("denoise_enabled"):
         stages.append("denoising")
     if (params.get("excl") or {}).get("masks"):
-        stages.append("manual exclusion (NaN in place — shape preserved)")
+        stages.append("manual exclusion (excluded spectra blanked, shape preserved)")
     if not stages:
         return "No preprocessing stages enabled — exporting raw data."
     return "Export includes: " + ", ".join(stages) + "."
 
 
-def _render_export_card(name: str, file_hash: str, da_final, params: dict) -> None:
+def _render_export_card(name: str, entry: dict, da_final, params: dict) -> None:
     """Per-sample download buttons; ``da_final`` is None when processing failed."""
+    file_hash = entry["hash"]
     with st.container(border=True):
         st.markdown('<p class="section-header">Export</p>', unsafe_allow_html=True)
         if da_final is None:
             st.warning("No exportable data — fix the processing error above.")
             return
         stem = _export_stem(name)
+        ds = entry["dataset"]
+        axis_label = (
+            f"{da_final.dims[-1]} ({ds.spectral_unit})" if ds.spectral_unit else da_final.dims[-1]
+        )
         excluded_mask = (params.get("excl") or {}).get("masks", {}).get(name)
-        btn_cols = st.columns(2 if da_final.ndim > 1 else 1)
-        with btn_cols[0]:
+
+        # Payloads are built lazily: st.download_button invokes the callable
+        # only when the user clicks, so rendering this card costs nothing.
+        # on_click="ignore" also skips the app rerun a click would trigger.
+        col_csv, col_npz = st.columns(2)
+        with col_csv:
+            st.download_button(
+                "Full spectra (CSV)",
+                partial(spectra_to_csv, da_final, axis_label),
+                file_name=f"{stem}.csv",
+                mime="text/csv",
+                key=f"export_full_csv_{file_hash}",
+                on_click="ignore",
+                help=(
+                    "Plain-text table for Origin / Excel: first column is the "
+                    "spectral axis, one column per spectrum (r{row}_c{col}, "
+                    "1-based)."
+                ),
+            )
+            if da_final.ndim > 1:
+                st.download_button(
+                    "Mean spectrum (CSV)",
+                    partial(mean_spectrum_to_csv, da_final, axis_label),
+                    file_name=f"{stem}_mean.csv",
+                    mime="text/csv",
+                    key=f"export_mean_csv_{file_hash}",
+                    on_click="ignore",
+                    help="Two columns: spectral axis, mean intensity over all spectra.",
+                )
+        with col_npz:
             st.download_button(
                 "Full spectra (.npz)",
-                _full_npz_cached(file_hash, params, da_final, excluded_mask),
+                partial(spectra_to_npz, da_final, excluded_mask),
                 file_name=f"{stem}.npz",
                 key=f"export_full_{file_hash}",
+                on_click="ignore",
+                help="NumPy archive for Python (numpy.load): data + coordinates + exclusion mask.",
             )
-        if da_final.ndim > 1:
-            with btn_cols[1]:
+            if da_final.ndim > 1:
                 st.download_button(
                     "Mean spectrum (.npz)",
-                    _mean_npz_cached(file_hash, params, da_final),
+                    partial(mean_spectrum_to_npz, da_final),
                     file_name=f"{stem}_mean.npz",
                     key=f"export_mean_{file_hash}",
+                    on_click="ignore",
                 )
+        st.caption(
+            "CSV opens directly in Origin / Excel; .npz is for Python. "
+            "Files are generated when you click — a full map can take a few seconds."
+        )
 
 
 # ────────────────────────────── Page assembly ─────────────────────────────
@@ -469,14 +506,14 @@ def _render_sample_block(name: str, entry: dict, da_final, params: dict) -> None
             _render_sample_structure_card(name, entry)
         with col_r:
             _render_scan_image_card(ds, h)
-            _render_export_card(name, h, da_final, params)
+            _render_export_card(name, entry, da_final, params)
     else:
         col_l, col_r = st.columns(2, gap="medium")
         with col_l:
             _render_file_info_card(ds)
         with col_r:
             _render_sample_structure_card(name, entry)
-        _render_export_card(name, h, da_final, params)
+        _render_export_card(name, entry, da_final, params)
 
 
 def render_data_page() -> None:

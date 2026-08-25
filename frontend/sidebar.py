@@ -97,7 +97,7 @@ def render_sidebar() -> bool:
     if len(kinds) > 1:
         st.warning(
             f"Mixed measurement types uploaded: {', '.join(sorted(kinds))}. "
-            "Processing (CRR / SC) is disabled."
+            "Cosmic ray removal and denoising are disabled."
         )
         processing_ok = False
     else:

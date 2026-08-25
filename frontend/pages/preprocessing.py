@@ -4,14 +4,17 @@ Layout
 ------
 Left column (1/3), top to bottom:
 
-    Quick Setup       — "1D preprocessing" / "3D preprocessing" preset buttons
-                        that enable all three processing steps with per-spectrum
-                        (1D) or collection-based (3D) engines.
+    Quick Setup       — "Per-spectrum preset" / "Collection preset" buttons
+                        that enable all three processing steps with
+                        per-spectrum or collection-based engines. The
+                        per-spectrum path is a valid choice for any data shape
+                        (including maps); the collection path needs ≥ 2
+                        spectra.
     Normalization     — checkpoint multi-select + method. Selection cascades:
                         a later checkpoint auto-selects every earlier one
-                        (After Denoising ⇒ After CRR ⇒ Before).
+                        (After denoising ⇒ After cosmic rays ⇒ Before).
     Processing Steps  — ONE bordered card with four tabs:
-                        Clean Data | Cosmic Ray Remover | Denoising |
+                        Clean Data | Cosmic Rays | Denoising |
                         Exclude Spectra.
                         Tabs (not conditional panels) so every stage's widgets
                         render on every rerun and no widget state is lost when
@@ -21,7 +24,7 @@ Left column (1/3), top to bottom:
                         after the pipeline has run.
 
 Right column (2/3): ``_render_charts_fragment`` — three chart tabs
-(Preprocessing = per-stage progress or multi-file comparison; Final = final
+(Steps = per-stage progress or multi-file comparison; Final = final
 spectra, comparison or single-file; Selection = the interactive pixel picker
 that drives manual exclusion).
 
@@ -89,7 +92,7 @@ from ..exclusion import (
     to_display,
     undo,
 )
-from ..map_chart import make_selection_map_fig
+from ..map_chart import PLOTLY_CONFIG, make_selection_map_fig
 from ..pipeline_cache import final_da, get_finals, stage_dict
 
 # ─────────────────────────── Widget state restore ──────────────────────────
@@ -112,11 +115,11 @@ def _restore_widget_state() -> None:
     if "norm_selection" not in ss:
         sel: list[str] = []
         if stored.get("norm1_enabled"):
-            sel.append("Before")
+            sel.append(_NORM_BEFORE)
         if stored.get("norm2_enabled"):
-            sel.append("After CRR")
+            sel.append(_NORM_AFTER_CRR)
         if stored.get("norm3_enabled"):
-            sel.append("After Denoising")
+            sel.append(_NORM_AFTER_DENOISE)
         ss["norm_selection"] = sel
 
     if "norm_method" not in ss:
@@ -165,7 +168,6 @@ def _restore_widget_state() -> None:
         for wkey, pkey in (
             ("denoise_nc_type", "n_components_type"),
             ("denoise_nc_int", "n_components_int"),
-            ("denoise_nc_float", "n_components_float"),
         ):
             if wkey not in ss and pkey in den:
                 ss[wkey] = den[pkey]
@@ -199,17 +201,26 @@ def _restore_widget_state() -> None:
 # Callbacks run before the script body, so they may freely seed widget keys.
 
 
-_NORM_SEGMENTS = ["Before", "After CRR", "After Denoising"]
+_NORM_BEFORE = "Before processing"
+_NORM_AFTER_CRR = "After cosmic rays"
+_NORM_AFTER_DENOISE = "After denoising"
+_NORM_SEGMENTS = [_NORM_BEFORE, _NORM_AFTER_CRR, _NORM_AFTER_DENOISE]
+# Segment values stored by sessions that predate the plain-language rename.
+_NORM_LEGACY = {
+    "Before": _NORM_BEFORE,
+    "After CRR": _NORM_AFTER_CRR,
+    "After Denoising": _NORM_AFTER_DENOISE,
+}
 
 
 def _cascade_norm_selection() -> None:
     """Enforce prefix closure on the normalization checkpoints: selecting a
     later checkpoint auto-selects every earlier one."""
     sel = set(st.session_state.get("norm_selection") or [])
-    if "After Denoising" in sel:
-        sel.update(("Before", "After CRR"))
-    if "After CRR" in sel:
-        sel.add("Before")
+    if _NORM_AFTER_DENOISE in sel:
+        sel.update((_NORM_BEFORE, _NORM_AFTER_CRR))
+    if _NORM_AFTER_CRR in sel:
+        sel.add(_NORM_BEFORE)
     st.session_state["norm_selection"] = [s for s in _NORM_SEGMENTS if s in sel]
 
 
@@ -233,36 +244,52 @@ def _render_quick_setup(processing_ok: bool) -> None:
         st.markdown('<p class="section-header">Quick Setup</p>', unsafe_allow_html=True)
         col_1d, col_3d = st.columns(2)
         col_1d.button(
-            "1D preprocessing",
+            "Per-spectrum preset",
             on_click=_apply_preset,
             args=("1d",),
             disabled=not processing_ok,
             width="stretch",
             help=(
-                "Enable all steps with per-spectrum engines: Clean Data, "
-                "Cosmic Ray Remover (1D) and Denoising (Smoother). "
-                "Best for single spectra and small series."
+                "Enable every step with per-spectrum engines: Clean Data, "
+                "cosmic ray removal (1D) and denoising (Smoother). Each "
+                "spectrum is treated independently — works on any data, "
+                "including maps and line scans."
             ),
         )
         col_3d.button(
-            "3D preprocessing",
+            "Collection preset",
             on_click=_apply_preset,
             args=("3d",),
             disabled=not processing_ok,
             width="stretch",
             help=(
-                "Enable all steps with collection-based engines: Clean Data, "
-                "Cosmic Ray Remover (2D/3D spatial) and Denoising (PCA). "
-                "Best for maps and line scans."
+                "Enable every step with collection-based engines: Clean Data, "
+                "cosmic ray removal (2D/3D spatial) and denoising (PCA). Uses "
+                "the whole set of spectra as statistical context — needs a "
+                "map or line scan (at least 2 spectra)."
             ),
         )
         st.caption("Presets enable every processing step; normalization is left as set.")
+        if not processing_ok:
+            st.caption(
+                "Presets are disabled: processing is only available for PL "
+                "data with a single measurement type loaded."
+            )
 
 
 def _render_normalization_card() -> tuple[list[str], str | None]:
     """Normalization checkpoints (cascading) + method selector."""
     with st.container(border=True):
         st.markdown('<p class="section-header">Normalization</p>', unsafe_allow_html=True)
+        # Map segment values stored by an older session onto the renamed
+        # labels — a stale value in widget state would otherwise crash the
+        # segmented control.
+        if "norm_selection" in st.session_state:
+            st.session_state["norm_selection"] = [
+                _NORM_LEGACY.get(s, s)
+                for s in (st.session_state["norm_selection"] or [])
+                if _NORM_LEGACY.get(s, s) in _NORM_SEGMENTS
+            ]
         norm_selection = st.segmented_control(
             "Normalize at",
             _NORM_SEGMENTS,
@@ -270,7 +297,11 @@ def _render_normalization_card() -> tuple[list[str], str | None]:
             key="norm_selection",
             on_change=_cascade_norm_selection,
             label_visibility="collapsed",
-            help=("Selecting a later checkpoint automatically selects the earlier ones."),
+            help=(
+                "Where in the pipeline each spectrum gets rescaled. "
+                "Selecting a later checkpoint automatically selects the "
+                "earlier ones."
+            ),
         )
         norm_method: str | None = None
         if norm_selection:
@@ -307,9 +338,11 @@ def _render_exclusion_tab(loaded: dict[str, Any]) -> Any:
     through ``excl_file``.
     """
     st.caption(
-        "Drop individual spectra from analysis. Excluded spectra become "
-        "all-NaN in place — the map keeps its original shape, so exports and "
-        "pixel indices are unaffected."
+        "Drop individual spectra from the analysis. Excluded spectra are "
+        "blanked in place — the file keeps its original shape, so exports "
+        "and pixel numbering stay valid. Cosmic ray removal and denoising "
+        "still see excluded pixels as context, which keeps mask edits "
+        "instant."
     )
 
     names = list(loaded.keys())
@@ -424,6 +457,29 @@ def _render_exclusion_tab(loaded: dict[str, Any]) -> Any:
     return st.container()
 
 
+def _caption_pipeline_order() -> None:
+    """One line stating the fixed run order and which steps are currently on.
+
+    The order itself is hard-wired in ``backend.pipeline.run_stage_chain``;
+    this is the only place the UI spells it out rather than implying it via
+    tab order."""
+    ss = st.session_state
+    enabled = [
+        name
+        for key, name in (
+            ("cd_enabled", "Clean Data"),
+            ("crr_enabled", "Cosmic Rays"),
+            ("denoise_enabled", "Denoising"),
+        )
+        if ss.get(key)
+    ]
+    order = "Steps run in a fixed order: Clean Data → Cosmic Rays → Denoising → Exclude Spectra"
+    if enabled:
+        st.caption(f"{order}. Enabled: **{', '.join(enabled)}**.")
+    else:
+        st.caption(f"{order}. Nothing is enabled yet — charts show raw data.")
+
+
 def _render_stage_tabs(
     processing_ok: bool,
     loaded: dict[str, Any],
@@ -439,8 +495,9 @@ def _render_stage_tabs(
 
     with st.container(border=True):
         st.markdown('<p class="section-header">Processing Steps</p>', unsafe_allow_html=True)
+        _caption_pipeline_order()
         tab_cd, tab_crr, tab_dn, tab_excl = st.tabs(
-            ["Clean Data", "Cosmic Ray Remover", "Denoising", "Exclude Spectra"]
+            ["Clean Data", "Cosmic Rays", "Denoising", "Exclude Spectra"]
         )
 
         # ── Clean Data ────────────────────────────────────────────────────
@@ -456,9 +513,9 @@ def _render_stage_tabs(
                     "- **Single spectrum (1D):** issues a warning; spectrum is left unchanged.\n"
                     "- **Line scan / series (2D):** drops saturated spectra from the stack "
                     "and records which indices were removed.\n"
-                    "- **Map (3D):** NaN-fills the dead pixels in place, preserving the full "
+                    "- **Map (3D):** blanks the dead pixels in place, preserving the full "
                     "map shape so spatial coordinates stay intact. All downstream steps "
-                    "(Cosmic Ray Removal, Spectra Cleaner) handle NaN pixels gracefully.\n\n"
+                    "(cosmic ray removal, denoising) handle blanked pixels gracefully.\n\n"
                     "**When to enable:** if your data contains dead detector pixels or "
                     "spectra where the signal went off-scale and clipped to zero. "
                     "Run this *before* Cosmic Ray Removal so dead pixels don't interfere "
@@ -474,12 +531,19 @@ def _render_stage_tabs(
                 # Filled by _render_cd_removed_visual after the pipeline runs.
                 cd_visual_slot = st.container()
 
-        # ── Cosmic Ray Remover ────────────────────────────────────────────
+        # ── Cosmic Rays ───────────────────────────────────────────────────
         with tab_crr:
             if not processing_ok:
                 st.info(_pl_info)
             crr_enabled = st.toggle(
-                "Apply CosmicRayRemover", key="crr_enabled", disabled=not processing_ok
+                "Remove cosmic ray spikes",
+                key="crr_enabled",
+                disabled=not processing_ok,
+                help=(
+                    "Detects the sharp single-channel spikes that cosmic rays "
+                    "leave on CCD detectors and repairs them from the "
+                    "surrounding signal."
+                ),
             )
             crr_params: dict[str, Any] = {}
             if crr_enabled:
@@ -490,7 +554,14 @@ def _render_stage_tabs(
             if not processing_ok:
                 st.info(_pl_info)
             denoise_enabled = st.toggle(
-                "Apply Denoiser", key="denoise_enabled", disabled=not processing_ok
+                "Reduce noise",
+                key="denoise_enabled",
+                disabled=not processing_ok,
+                help=(
+                    "Smooths random detector noise while preserving the "
+                    "spectral features — statistically across the whole "
+                    "dataset (PCA) or spectrum by spectrum (Smoother)."
+                ),
             )
             denoise_params: dict[str, Any] = {}
             if denoise_enabled:
@@ -522,11 +593,11 @@ def _render_preprocessing_params(
 
     _nm = {"method": norm_method} if norm_method else {}
     pipeline_params = {
-        "norm1_enabled": "Before" in norm_selection,
+        "norm1_enabled": _NORM_BEFORE in norm_selection,
         "norm1": _nm,
-        "norm2_enabled": "After CRR" in norm_selection,
+        "norm2_enabled": _NORM_AFTER_CRR in norm_selection,
         "norm2": _nm,
-        "norm3_enabled": "After Denoising" in norm_selection,
+        "norm3_enabled": _NORM_AFTER_DENOISE in norm_selection,
         "norm3": _nm,
         **stage_params,
         # Read from sl_excluded, which the Exclude tab and the Selection chart
@@ -641,13 +712,13 @@ def _render_cd_removed_visual(slot, all_datasets: dict, loaded: dict[str, Any]) 
                 st.image(_removal_grid_rgb(grid, valid))
                 st.caption(
                     f"{label}removed {n_removed} / {total} spectra{idx_note}. "
-                    "Index runs left→right, top→bottom."
+                    "Grey = kept, red = removed; index runs left→right, top→bottom."
                 )
             else:
                 st.image(_removal_grid_rgb(mask))
                 st.caption(
-                    f"{label}{n_removed} / {total} map pixels NaN-filled "
-                    "(shown in red, map layout)."
+                    f"{label}{n_removed} / {total} map pixels removed "
+                    "(grey = kept, red = removed; map layout)."
                 )
 
 
@@ -696,7 +767,10 @@ def _render_excl_visual(slot, all_datasets: dict, loaded: dict[str, Any]) -> Non
         parts = [f"**{n_user}** excluded"]
         if n_auto:
             parts.append(f"{n_auto} auto-removed")
-        st.caption(f"{' · '.join(parts)} / {total} spectra.")
+        st.caption(
+            f"{' · '.join(parts)} / {total} spectra. "
+            "Grey = kept · red = auto-removed (Clean Data) · orange = manually excluded."
+        )
 
 
 # ───────────────────────── Right column: chart tabs ────────────────────────
@@ -962,7 +1036,7 @@ def _render_browse_controls(da) -> tuple[Any, str, str]:
         return (
             subset,
             mode,
-            (f"pixel ({to_display(r)}, {to_display(c)}) · flat index {to_display(r * n_col + c)}"),
+            (f"pixel ({to_display(r)}, {to_display(c)}) · spectrum {to_display(r * n_col + c)}"),
         )
 
     if mode == _BROWSE_ROW:
@@ -1212,6 +1286,7 @@ def _render_selection_tab(
         key="excl_map",
         width="stretch",
         height=600,
+        config=PLOTLY_CONFIG,
     )
 
     points = ((event or {}).get("selection") or {}).get("points") or []
@@ -1247,7 +1322,7 @@ def _render_charts_fragment(
     in from outside) is required by Streamlit's fragment contract: fragments
     may only render into containers they create themselves.
     """
-    tab_prog, tab_final, tab_sel = st.tabs(["Preprocessing", "Final", "Selection"])
+    tab_prog, tab_final, tab_sel = st.tabs(["Steps", "Final", "Selection"])
     with tab_prog:
         _render_progress_tab(all_datasets, loaded, pipeline_params, multi, ref_ds)
     with tab_final:
@@ -1280,6 +1355,16 @@ def render_preprocessing_page() -> None:
         st.session_state["sl_pipeline_params"] = pipeline_params
 
     with right:
+        nothing_enabled = not any(
+            pipeline_params.get(k)
+            for k in ("norm1_enabled", "cd_enabled", "crr_enabled", "denoise_enabled")
+        ) and not (pipeline_params.get("excl") or {}).get("masks")
+        if nothing_enabled:
+            st.info(
+                "No processing enabled — the charts show raw data. "
+                "Use a Quick Setup preset or enable steps on the left."
+            )
+
         all_datasets, errors = _run_preprocessing(loaded, pipeline_params)
 
         for err in errors:

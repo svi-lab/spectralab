@@ -339,7 +339,7 @@ def run_stage_chain(
     recipe["norm1"] = params.get("norm1", {})
     if recipe["norm1_enabled"]:
         da = stage_normalize(da, recipe["norm1"])
-        stage_records.append(("norm_before", "Normalized (raw)", da))
+        stage_records.append(("norm_before", "Normalized (before)", da))
     else:
         stage_records.append(("raw", "Raw", dataset.da))
 
@@ -362,9 +362,9 @@ def run_stage_chain(
     if recipe["crr_enabled"]:
         if recipe["norm2_enabled"]:
             da = stage_normalize(da, recipe["norm2"])
-            stage_records.append(("norm_post_crr", "Normalized (post-CR)", da))
+            stage_records.append(("norm_post_crr", "Normalized (after cosmic rays)", da))
         else:
-            stage_records.append(("crr", "CR Removed", da))
+            stage_records.append(("crr", "Cosmic rays removed", da))
 
     # ── Denoiser ───────────────────────────────────────────────────────
     recipe["denoise_enabled"] = bool(params.get("denoise_enabled"))
@@ -376,7 +376,7 @@ def run_stage_chain(
     if recipe["denoise_enabled"]:
         if recipe["norm3_enabled"]:
             da = stage_normalize(da, recipe["norm3"])
-            stage_records.append(("norm_post_denoise", "Normalized (final)", da))
+            stage_records.append(("norm_post_denoise", "Normalized (after denoising)", da))
         else:
             stage_records.append(("denoised", "Denoised", da))
 

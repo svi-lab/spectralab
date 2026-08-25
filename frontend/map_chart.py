@@ -19,6 +19,13 @@ FS_AXIS = 22
 FS_TICK = 18
 FS_CBAR = 18
 
+# Shared st.plotly_chart(config=...) for every map figure: the modebar camera
+# button downloads a publication-quality PNG (3× pixel density) instead of the
+# default screen-resolution one.
+PLOTLY_CONFIG = {
+    "toImageButtonOptions": {"format": "png", "scale": 3, "filename": "map"},
+}
+
 
 def _colorbar(title: str, tickformat: str = "") -> dict:
     return dict(

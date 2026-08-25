@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any
 
 import numpy as np
@@ -30,8 +31,9 @@ from ..charts import (
     make_deconv_preview_echarts,
 )
 from ..controls import render_axis_controls, render_map_display_controls
+from ..exclusion import DISPLAY_BASE
 from ..export_utils import batch_fit_to_npz, fit_curves_to_npz
-from ..map_chart import make_scalar_map_fig
+from ..map_chart import PLOTLY_CONFIG, make_scalar_map_fig
 from ..pipeline_cache import default_pipeline_params, final_da, get_finals
 
 _BAND_COLUMNS = [
@@ -609,10 +611,12 @@ def _batch_result_csv(batch_result, labels: list[str]) -> bytes:
         for c in range(n_col):
             for label in labels:
                 band = batch_result.band_results[label]
+                # 1-based row/column, matching the app's display numbering
+                # and every other CSV export.
                 writer.writerow(
                     [
-                        r,
-                        c,
+                        r + 1,
+                        c + 1,
                         label,
                         band["center"][r, c],
                         band["amplitude"][r, c],
@@ -702,13 +706,33 @@ def render_deconvolution_page() -> None:
             if target_mode == "Single pixel":
                 n_row = da_final.sizes[spatial_dims[0]]
                 n_col = da_final.sizes[spatial_dims[1]]
+                # 1-based display numbering, same as everywhere else in the
+                # app. Clamp stale 0-based values left by older sessions so
+                # the widgets don't reject them.
+                for _key in ("deconv_row_idx", "deconv_col_idx"):
+                    if st.session_state.get(_key, DISPLAY_BASE) < DISPLAY_BASE:
+                        st.session_state[_key] = DISPLAY_BASE
                 c1, c2 = st.columns(2)
-                row_idx = c1.number_input("Row index", 0, n_row - 1, 0, key="deconv_row_idx")
-                col_idx = c2.number_input("Column index", 0, n_col - 1, 0, key="deconv_col_idx")
+                # No explicit default: the widget falls back to min_value, so
+                # the stale-state clamp above never conflicts with a default.
+                row_idx = c1.number_input(
+                    "Row",
+                    min_value=DISPLAY_BASE,
+                    max_value=n_row - 1 + DISPLAY_BASE,
+                    key="deconv_row_idx",
+                    help="1-based — same numbering as the Preprocessing page.",
+                )
+                col_idx = c2.number_input(
+                    "Column",
+                    min_value=DISPLAY_BASE,
+                    max_value=n_col - 1 + DISPLAY_BASE,
+                    key="deconv_col_idx",
+                    help="1-based — same numbering as the Preprocessing page.",
+                )
                 target_da = da_final.isel(
                     {
-                        spatial_dims[0]: int(row_idx),
-                        spatial_dims[1]: int(col_idx),
+                        spatial_dims[0]: int(row_idx) - DISPLAY_BASE,
+                        spatial_dims[1]: int(col_idx) - DISPLAY_BASE,
                     }
                 )
                 target_x = target_da.coords[spectral_dim].values
@@ -864,16 +888,18 @@ def render_deconvolution_page() -> None:
             st.dataframe(_fit_stats_rows(fit_result), width="stretch")
             st.download_button(
                 "Download fit statistics (CSV)",
-                _fit_stats_csv(fit_result),
+                partial(_fit_stats_csv, fit_result),
                 file_name=f"{file_name}_deconv_fit.csv",
                 mime="text/csv",
                 key="deconv_download_single",
+                on_click="ignore",
             )
             st.download_button(
                 "Export fit curves (.npz)",
-                fit_curves_to_npz(fit_result),
+                partial(fit_curves_to_npz, fit_result),
                 file_name=f"{file_name}_deconv_curves.npz",
                 key="deconv_export_curves_npz",
+                on_click="ignore",
             )
 
         if batch_clicked:
@@ -944,17 +970,19 @@ def render_deconvolution_page() -> None:
                 colorscale=colorscale,
                 map_opacity=map_opacity,
             )
-            st.plotly_chart(fig, width="stretch", height=550)
+            st.plotly_chart(fig, width="stretch", height=550, config=PLOTLY_CONFIG)
             st.download_button(
                 "Download per-pixel parameters (CSV)",
-                _batch_result_csv(batch_result, labels),
+                partial(_batch_result_csv, batch_result, labels),
                 file_name=f"{file_name}_batch_fit.csv",
                 mime="text/csv",
                 key="deconv_download_batch",
+                on_click="ignore",
             )
             st.download_button(
                 "Export parameter maps (.npz)",
-                batch_fit_to_npz(
+                partial(
+                    batch_fit_to_npz,
                     batch_result,
                     labels,
                     da_final.coords[spatial_dims[0]].values,
@@ -962,4 +990,5 @@ def render_deconvolution_page() -> None:
                 ),
                 file_name=f"{file_name}_batch_fit.npz",
                 key="deconv_export_batch_npz",
+                on_click="ignore",
             )

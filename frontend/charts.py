@@ -392,6 +392,9 @@ def _download_toolbox() -> dict:
                 "name": "spectrum",
                 "pixelRatio": 4,
                 "type": "png",
+                # Explicit white: the chart canvas itself is transparent, and a
+                # transparent PNG turns black in many viewers/journals.
+                "backgroundColor": "#ffffff",
             }
         },
     }

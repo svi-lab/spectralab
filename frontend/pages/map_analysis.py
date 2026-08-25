@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 import streamlit as st
 from streamlit_echarts import st_echarts
 
@@ -11,7 +12,8 @@ from backend._shared.dataset import SpectralDataset
 
 from ..charts import convert_x, convert_x_to_native
 from ..controls import render_map_display_controls
-from ..map_chart import make_map_fig, make_mean_spectrum_option
+from ..export_utils import scalar_map_to_csv
+from ..map_chart import PLOTLY_CONFIG, make_map_fig, make_mean_spectrum_option
 from ..pipeline_cache import default_pipeline_params, final_da, get_finals
 
 # This page has no spectral-unit selector: the range slider, the colorbar
@@ -138,7 +140,7 @@ def _render_map_section(
                 lmin_disp,
                 lmax_disp,
             )
-            st.plotly_chart(fig_map, width="stretch", height=600)
+            st.plotly_chart(fig_map, width="stretch", height=600, config=PLOTLY_CONFIG)
 
     if ds.image_arr is None:
         st.caption("ℹ No white-light image (WHTL block) found in this file — heatmap only.")
@@ -173,6 +175,87 @@ def _render_map_section(
         height="200px",
     )
 
+    _render_map_export(da_map, ds, map_name, quantity, lmin_disp, lmax_disp, x_disp, mean_da)
+
+
+def _render_map_export(
+    da_map,
+    ds: SpectralDataset,
+    map_name: str,
+    quantity: str,
+    lmin_disp: float,
+    lmax_disp: float,
+    x_disp: np.ndarray,
+    mean_da,
+) -> None:
+    """CSV downloads of exactly what the page shows: the per-pixel map values
+    over the selected spectral range, and the mean spectrum on the energy axis."""
+    if lmin_disp >= lmax_disp:
+        return
+    spectral_dim = da_map.dims[-1]
+    stem = map_name[: -len(".wdf")] if map_name.lower().endswith(".wdf") else map_name
+
+    with st.expander("Export (CSV)"):
+        value_name = "deviation_from_mean" if quantity == "deviation" else "integrated_intensity"
+
+        # Deferred payloads: the range integration and CSV formatting run only
+        # when the user clicks, not on every rerun / slider drag.
+        def _map_csv() -> bytes:
+            lo_nat, hi_nat = (
+                convert_x_to_native(
+                    v,
+                    spectral_dim,
+                    _X_UNIT,
+                    ds.laser_nm,
+                    src_unit=ds.spectral_unit,
+                    native_type=ds.spectral_units,
+                )
+                for v in (lmin_disp, lmax_disp)
+            )
+            da_range = da_map.sel({spectral_dim: slice(min(lo_nat, hi_nat), max(lo_nat, hi_nat))})
+            spatial_dims = [d for d in da_range.dims if d != spectral_dim]
+            if quantity == "deviation":
+                mean_spec = da_range.mean(spatial_dims)
+                z = np.abs(da_range - mean_spec).sum(spectral_dim, min_count=1).values
+            else:
+                z = da_range.sum(spectral_dim, min_count=1).values
+            return scalar_map_to_csv(
+                z,
+                da_map.coords[da_map.dims[0]].values,
+                da_map.coords[da_map.dims[1]].values,
+                value_name,
+            )
+
+        def _mean_csv() -> bytes:
+            return (
+                "energy_eV,mean_intensity\n"
+                + "\n".join(f"{x:.8g},{y:.8g}" for x, y in zip(x_disp, mean_da.values))
+            ).encode("utf-8")
+
+        range_tag = f"{lmin_disp:.2f}-{lmax_disp:.2f}{_UNIT_LABEL}"
+        col_map, col_mean = st.columns(2)
+        col_map.download_button(
+            "Map values (CSV)",
+            _map_csv,
+            file_name=f"{stem}_map_{value_name}_{range_tag}.csv",
+            mime="text/csv",
+            on_click="ignore",
+            help=(
+                "One row per pixel: 1-based row/column, µm coordinates and "
+                "the value shown on the map (current quantity and spectral "
+                "range)."
+            ),
+        )
+        col_mean.download_button(
+            "Mean spectrum (CSV)",
+            _mean_csv,
+            file_name=f"{stem}_mean_spectrum_eV.csv",
+            mime="text/csv",
+            on_click="ignore",
+            help="Two columns: energy (eV), mean intensity over all pixels.",
+        )
+        st.caption("Plain-text tables — open directly in Origin / Excel.")
+
 
 def render_map_page() -> None:
     """Map Analysis page: map parameters (left) + plotly heatmap (right)."""
@@ -189,8 +272,8 @@ def render_map_page() -> None:
 
     if not map_candidates:
         st.info(
-            "No raster map files loaded. "
-            "The Map Analysis page works with 3D (row, column, spectral) DataArrays."
+            "This page needs a map scan (rows × columns of spectra). "
+            "The loaded file(s) contain single spectra or line scans."
         )
         return
 
