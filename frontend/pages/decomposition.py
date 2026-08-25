@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 import numpy as np
 import streamlit as st
 from streamlit_echarts import st_echarts
@@ -21,8 +23,8 @@ from ..controls import (
     render_mcr_params,
     render_nmf_params,
 )
-from ..export_utils import mcr_to_npz, nmf_to_npz
-from ..map_chart import make_scalar_map_fig
+from ..export_utils import abundance_maps_to_csv, components_to_csv, mcr_to_npz, nmf_to_npz
+from ..map_chart import PLOTLY_CONFIG, make_scalar_map_fig
 from ..pipeline_cache import default_pipeline_params, final_da, get_finals
 
 # No spectral-unit selector on this page: every component / ambiguity chart is
@@ -268,26 +270,28 @@ def _render_mcr_results(mcr_result, ds, map_name):
     )
 
     tab_components, tab_maps, tab_amb, tab_stats = st.tabs(
-        ["Component Spectra", "Concentration Maps", "Ambiguity", "Statistics"]
+        ["Component Spectra", "Concentration Maps", "Ambiguity", "Statistics"],
+        on_change="rerun",
     )
 
     with tab_components:
         comp_title = st.text_input(
             "Chart title", value="Pure-Component Spectra", key="mcr_comp_title"
         )
-        st_echarts(
-            make_components_echarts(
-                mcr_result["components"],
-                mcr_result["spectral_coords"],
-                mcr_result["spectral_dim"],
-                title=comp_title,
-                x_unit=_X_UNIT,
-                laser_nm=ds.laser_nm,
-                src_unit=ds.spectral_unit,
-                native_type=ds.spectral_units,
-            ),
-            height="72vh",
-        )
+        if tab_components.open is True:
+            st_echarts(
+                make_components_echarts(
+                    mcr_result["components"],
+                    mcr_result["spectral_coords"],
+                    mcr_result["spectral_dim"],
+                    title=comp_title,
+                    x_unit=_X_UNIT,
+                    laser_nm=ds.laser_nm,
+                    src_unit=ds.spectral_unit,
+                    native_type=ds.spectral_units,
+                ),
+                height="72vh",
+            )
 
     with tab_maps:
         n_comp = mcr_result["components"].shape[0]
@@ -300,25 +304,29 @@ def _render_mcr_results(mcr_result, ds, map_name):
         )
         with c_display:
             colorscale, map_opacity = render_map_display_controls("mcr_map", inline=True)
-        abundances = mcr_result["abundances"]
-        z = abundances.isel(component=comp_idx).values
-        row_coords = abundances.coords["row"].values
-        col_coords = abundances.coords["column"].values
-        fig = make_scalar_map_fig(
-            z,
-            row_coords,
-            col_coords,
-            ds.image_arr,
-            ds.image_meta,
-            cbar_label=f"Component {comp_idx + 1} concentration",
-            title=f"{map_name} — Component {comp_idx + 1}",
-            colorscale=colorscale,
-            map_opacity=map_opacity,
-        )
-        st.plotly_chart(fig, width="stretch", height=550)
+        if tab_maps.open is True:
+            abundances = mcr_result["abundances"]
+            z = abundances.isel(component=comp_idx).values
+            row_coords = abundances.coords["row"].values
+            col_coords = abundances.coords["column"].values
+            fig = make_scalar_map_fig(
+                z,
+                row_coords,
+                col_coords,
+                ds.image_arr,
+                ds.image_meta,
+                cbar_label=f"Component {comp_idx + 1} concentration",
+                title=f"{map_name} — Component {comp_idx + 1}",
+                colorscale=colorscale,
+                map_opacity=map_opacity,
+            )
+            st.plotly_chart(fig, width="stretch", height=550, config=PLOTLY_CONFIG)
 
     with tab_amb:
-        _render_ambiguity_tab(mcr_result, ds)
+        if tab_amb.open is True:
+            _render_ambiguity_tab(mcr_result, ds)
+        else:
+            st.caption("Open this tab to view rotational-ambiguity diagnostics.")
 
     with tab_stats:
         meta = mcr_result["meta"]
@@ -341,12 +349,40 @@ def _render_mcr_results(mcr_result, ds, map_name):
                 "max_iter — results may be less stable. Consider raising "
                 "max_iter or loosening the threshold in Advanced MCR-ALS parameters."
             )
-        st.download_button(
-            "Export MCR result (.npz)",
-            mcr_to_npz(mcr_result),
+        axis_label = f"{mcr_result['spectral_dim']} ({ds.spectral_unit})"
+        c1, c2, c3 = st.columns(3)
+        c1.download_button(
+            "Component spectra (CSV)",
+            partial(
+                components_to_csv,
+                mcr_result["components"],
+                mcr_result["spectral_coords"],
+                axis_label,
+            ),
+            file_name=f"{map_name}_mcr_components.csv",
+            mime="text/csv",
+            key="mcr_export_components_csv",
+            on_click="ignore",
+            help="Spectral axis + one column per resolved component spectrum.",
+        )
+        c2.download_button(
+            "Concentration maps (CSV)",
+            partial(abundance_maps_to_csv, mcr_result["abundances"], value_name="concentration"),
+            file_name=f"{map_name}_mcr_concentrations.csv",
+            mime="text/csv",
+            key="mcr_export_maps_csv",
+            on_click="ignore",
+            help="One row per pixel: 1-based row/column, µm coordinates, one value per component.",
+        )
+        c3.download_button(
+            "Everything (.npz)",
+            partial(mcr_to_npz, mcr_result),
             file_name=f"{map_name}_mcr.npz",
             key="mcr_export_npz",
+            on_click="ignore",
+            help="NumPy archive for Python: spectra, maps, lack-of-fit and ambiguity bands.",
         )
+        st.caption("CSV opens directly in Origin / Excel; .npz is for Python.")
 
 
 def _render_ambiguity_tab(mcr_result, ds):
@@ -438,12 +474,16 @@ def _render_nmf(left, right, da_map, ds, map_name):
         with st.container(border=True):
             st.markdown('<p class="section-header">Decomposition</p>', unsafe_allow_html=True)
             n_components = st.number_input(
-                "n_components (k)",
+                "Number of components",
                 value=3,
                 min_value=1,
                 step=1,
                 key="nmf_n_components",
-                help="Pick this using the diagnostic curve above — there is no automatic/hidden k selection.",
+                help=(
+                    "How many recurring spectral patterns to resolve. Pick it "
+                    "from the diagnostic curve above — there is no "
+                    "automatic/hidden selection."
+                ),
             )
             nmf_params = render_nmf_params()
             run_decompose = st.button(
@@ -492,26 +532,28 @@ def _render_nmf(left, right, da_map, ds, map_name):
             )
 
             tab_components, tab_maps, tab_stats = st.tabs(
-                ["Component Spectra", "Abundance Maps", "Statistics"]
+                ["Component Spectra", "Abundance Maps", "Statistics"],
+                on_change="rerun",
             )
 
             with tab_components:
                 comp_title = st.text_input(
                     "Chart title", value="Component Spectra", key="nmf_comp_title"
                 )
-                st_echarts(
-                    make_components_echarts(
-                        nmf_result["components"],
-                        nmf_result["spectral_coords"],
-                        nmf_result["spectral_dim"],
-                        title=comp_title,
-                        x_unit=_X_UNIT,
-                        laser_nm=ds.laser_nm,
-                        src_unit=ds.spectral_unit,
-                        native_type=ds.spectral_units,
-                    ),
-                    height="72vh",
-                )
+                if tab_components.open is True:
+                    st_echarts(
+                        make_components_echarts(
+                            nmf_result["components"],
+                            nmf_result["spectral_coords"],
+                            nmf_result["spectral_dim"],
+                            title=comp_title,
+                            x_unit=_X_UNIT,
+                            laser_nm=ds.laser_nm,
+                            src_unit=ds.spectral_unit,
+                            native_type=ds.spectral_units,
+                        ),
+                        height="72vh",
+                    )
 
             with tab_maps:
                 n_comp = nmf_result["components"].shape[0]
@@ -524,22 +566,23 @@ def _render_nmf(left, right, da_map, ds, map_name):
                 )
                 with c_display:
                     colorscale, map_opacity = render_map_display_controls("nmf_map", inline=True)
-                abundances = nmf_result["abundances"]
-                z = abundances.isel(component=comp_idx).values
-                row_coords = abundances.coords["row"].values
-                col_coords = abundances.coords["column"].values
-                fig = make_scalar_map_fig(
-                    z,
-                    row_coords,
-                    col_coords,
-                    ds.image_arr,
-                    ds.image_meta,
-                    cbar_label=f"Component {comp_idx + 1} abundance",
-                    title=f"{map_name} — Component {comp_idx + 1}",
-                    colorscale=colorscale,
-                    map_opacity=map_opacity,
-                )
-                st.plotly_chart(fig, width="stretch", height=550)
+                if tab_maps.open is True:
+                    abundances = nmf_result["abundances"]
+                    z = abundances.isel(component=comp_idx).values
+                    row_coords = abundances.coords["row"].values
+                    col_coords = abundances.coords["column"].values
+                    fig = make_scalar_map_fig(
+                        z,
+                        row_coords,
+                        col_coords,
+                        ds.image_arr,
+                        ds.image_meta,
+                        cbar_label=f"Component {comp_idx + 1} abundance",
+                        title=f"{map_name} — Component {comp_idx + 1}",
+                        colorscale=colorscale,
+                        map_opacity=map_opacity,
+                    )
+                    st.plotly_chart(fig, width="stretch", height=550, config=PLOTLY_CONFIG)
 
             with tab_stats:
                 meta = nmf_result["meta"]
@@ -562,12 +605,45 @@ def _render_nmf(left, right, da_map, ds, map_name):
                         "may be less stable. Consider raising max_iter in Advanced "
                         "NMF parameters."
                     )
-                st.download_button(
-                    "Export NMF result (.npz)",
-                    nmf_to_npz(nmf_result),
+                axis_label = f"{nmf_result['spectral_dim']} ({ds.spectral_unit})"
+                c1, c2, c3 = st.columns(3)
+                c1.download_button(
+                    "Component spectra (CSV)",
+                    partial(
+                        components_to_csv,
+                        nmf_result["components"],
+                        nmf_result["spectral_coords"],
+                        axis_label,
+                    ),
+                    file_name=f"{map_name}_nmf_components.csv",
+                    mime="text/csv",
+                    key="nmf_export_components_csv",
+                    on_click="ignore",
+                    help="Spectral axis + one column per component spectrum.",
+                )
+                c2.download_button(
+                    "Abundance maps (CSV)",
+                    partial(
+                        abundance_maps_to_csv, nmf_result["abundances"], value_name="abundance"
+                    ),
+                    file_name=f"{map_name}_nmf_abundances.csv",
+                    mime="text/csv",
+                    key="nmf_export_maps_csv",
+                    on_click="ignore",
+                    help=(
+                        "One row per pixel: 1-based row/column, µm coordinates, "
+                        "one value per component."
+                    ),
+                )
+                c3.download_button(
+                    "Everything (.npz)",
+                    partial(nmf_to_npz, nmf_result),
                     file_name=f"{map_name}_nmf.npz",
                     key="nmf_export_npz",
+                    on_click="ignore",
+                    help="NumPy archive for Python: components, abundances and coordinates.",
                 )
+                st.caption("CSV opens directly in Origin / Excel; .npz is for Python.")
         elif nmf_result is not None:
             st.caption(
                 f"Last NMF result was for **{nmf_result['file_name']}** — run again for **{map_name}**."

@@ -270,6 +270,8 @@ def remove_cosmic_rays_1d(
         Bool mask; ``True`` at all corrected channels.
     """
     y1 = _coerce_float_1d_spectrum(y, kernel_size)
+    if y1.size == 0 or np.all(np.isnan(y1)):
+        return y1.copy(), np.zeros(y1.shape, dtype=bool)
     if threshold <= 0 or not np.isfinite(threshold):
         raise ValueError("threshold must be positive and finite")
     if max_passes < 1:

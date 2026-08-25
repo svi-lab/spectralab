@@ -21,8 +21,13 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-_style_path = Path(__file__).parent / "frontend" / "style.css"
-st.markdown(f"<style>{_style_path.read_text()}</style>", unsafe_allow_html=True)
+
+@st.cache_resource
+def _app_stylesheet() -> str:
+    return (Path(__file__).parent / "frontend" / "style.css").read_text()
+
+
+st.markdown(f"<style>{_app_stylesheet()}</style>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Named page objects — referenced by _render_step_bar for st.switch_page

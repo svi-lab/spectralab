@@ -11,13 +11,30 @@ from backend.pipeline import load_wdf
 from frontend.session import clear_analysis_state
 
 
-@st.cache_data(show_spinner=False, max_entries=16)
-def _load_wdf_cached(file_id: str, _raw_bytes: bytes) -> SpectralDataset:
-    """Keyed on Streamlit's stable per-upload ``file_id`` — excluding the
-    bytes from hashing skips an MD5 pass over the full file (~75 MB) on
-    every rerun. Trade-off: re-uploading an identical file gets a new
-    file_id and re-parses once; accepted."""
-    return load_wdf(_raw_bytes)
+@st.cache_resource(show_spinner=False, max_entries=16)
+def _load_wdf_cached(file_id: str, raw_bytes: bytes) -> SpectralDataset:
+    """Keyed on Streamlit's stable per-upload ``file_id``.
+
+    ``cache_resource`` returns the same in-memory object (no unpickle copy on
+    every rerun). Trade-off: re-uploading an identical file gets a new
+    ``file_id`` and re-parses once; accepted."""
+    return load_wdf(raw_bytes)
+
+
+def _upload_matches_loaded(
+    uploaded_files: list[Any],
+    sl_loaded: dict[str, Any] | None,
+) -> bool:
+    """True when every uploaded file is already in ``sl_loaded`` with the same id."""
+    if not sl_loaded:
+        return False
+    names = {uf.name for uf in uploaded_files}
+    if set(sl_loaded.keys()) != names:
+        return False
+    for uf in uploaded_files:
+        if sl_loaded[uf.name]["hash"] != uf.file_id:
+            return False
+    return True
 
 
 def render_sidebar() -> bool:
@@ -63,20 +80,24 @@ def render_sidebar() -> bool:
     # uf.file_id is assigned once by Streamlit when the upload is registered and
     # stays stable across reruns of the same upload — use it as the cache/identity
     # key instead of re-hashing raw_bytes (an MD5 pass) on every single rerun.
-    loaded: dict[str, Any] = {}
-    load_errors: list[str] = []
-
-    with st.spinner(f"Reading {len(uploaded_files)} file(s)…"):
-        for uf in uploaded_files:
-            raw_bytes = uf.read()
-            try:
-                dataset = _load_wdf_cached(uf.file_id, raw_bytes)
-                loaded[uf.name] = {
-                    "hash": uf.file_id,
-                    "dataset": dataset,
-                }
-            except Exception as exc:
-                load_errors.append(f"{uf.name}: {exc}")
+    prev_loaded: dict[str, Any] | None = st.session_state.get("sl_loaded")
+    if _upload_matches_loaded(uploaded_files, prev_loaded):
+        loaded = prev_loaded
+        load_errors: list[str] = []
+    else:
+        loaded = {}
+        load_errors = []
+        with st.spinner(f"Reading {len(uploaded_files)} file(s)…"):
+            for uf in uploaded_files:
+                raw_bytes = uf.read()
+                try:
+                    dataset = _load_wdf_cached(uf.file_id, raw_bytes)
+                    loaded[uf.name] = {
+                        "hash": uf.file_id,
+                        "dataset": dataset,
+                    }
+                except Exception as exc:
+                    load_errors.append(f"{uf.name}: {exc}")
 
     for err in load_errors:
         st.error(f"Failed to read — {err}")
@@ -97,7 +118,7 @@ def render_sidebar() -> bool:
     if len(kinds) > 1:
         st.warning(
             f"Mixed measurement types uploaded: {', '.join(sorted(kinds))}. "
-            "Processing (CRR / SC) is disabled."
+            "Cosmic ray removal and denoising are disabled."
         )
         processing_ok = False
     else:

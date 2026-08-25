@@ -294,10 +294,16 @@ def assemble_dataset(
 
     Attrs always record the full provenance (``stage_vars`` in run order,
     ``stage_labels`` var→label, ``final_var``); with ``keep_stages=False``
-    only the final data variable is stored (memory: analysis pages never
-    look at intermediates).
+    only the final data variable is stored, except ``clean_data`` is also
+    kept when that stage ran — the Clean Data tab's removal grid reads it.
     """
-    records = stage_records if keep_stages else stage_records[-1:]
+    if keep_stages:
+        records = stage_records
+    else:
+        records = [stage_records[-1]]
+        cd_rec = next((r for r in stage_records if r[0] == "clean_data"), None)
+        if cd_rec is not None and cd_rec[0] != records[-1][0]:
+            records = [cd_rec, records[-1]]
     ds = xr.Dataset({var: da for var, _label, da in records})
     ds.attrs["stage_vars"] = [var for var, _, _ in stage_records]
     ds.attrs["stage_labels"] = {var: label for var, label, _ in stage_records}
@@ -334,21 +340,27 @@ def run_stage_chain(
     stage_records: list[StageRecord] = []
     recipe: dict[str, Any] = {}
 
-    # ── Normalization 1 (raw) ──────────────────────────────────────────
-    recipe["norm1_enabled"] = bool(params.get("norm1_enabled"))
-    recipe["norm1"] = params.get("norm1", {})
-    if recipe["norm1_enabled"]:
-        da = stage_normalize(da, recipe["norm1"])
-        stage_records.append(("norm_before", "Normalized (raw)", da))
-    else:
-        stage_records.append(("raw", "Raw", dataset.da))
-
-    # ── CleanData ──────────────────────────────────────────────────────
     recipe["cd_enabled"] = bool(params.get("cd_enabled"))
     recipe["cd"] = params.get("cd", {})
+    recipe["norm1_enabled"] = bool(params.get("norm1_enabled"))
+    recipe["norm1"] = params.get("norm1", {})
+
+    # ── CleanData (raw) ────────────────────────────────────────────────
+    # Runs on raw ADC values *before* normalization. min_max normalization
+    # sets every spectrum's minimum to exactly 0, so detecting consecutive
+    # zeros after norm would flag every spectrum at n_zeros=1.
+    if not recipe["norm1_enabled"] and recipe["cd_enabled"]:
+        stage_records.append(("raw", "Raw", dataset.da))
     if recipe["cd_enabled"]:
         da = stage_clean_data(da, recipe["cd"])
         stage_records.append(("clean_data", "Clean Data", da))
+
+    # ── Normalization 1 ────────────────────────────────────────────────
+    if recipe["norm1_enabled"]:
+        da = stage_normalize(da, recipe["norm1"])
+        stage_records.append(("norm_before", "Normalized (before)", da))
+    elif not stage_records:
+        stage_records.append(("raw", "Raw", dataset.da))
 
     # ── CosmicRayRemover ───────────────────────────────────────────────
     # Recipe grows even when the stage is off so a later cached stage's key
@@ -362,9 +374,9 @@ def run_stage_chain(
     if recipe["crr_enabled"]:
         if recipe["norm2_enabled"]:
             da = stage_normalize(da, recipe["norm2"])
-            stage_records.append(("norm_post_crr", "Normalized (post-CR)", da))
+            stage_records.append(("norm_post_crr", "Normalized (after cosmic rays)", da))
         else:
-            stage_records.append(("crr", "CR Removed", da))
+            stage_records.append(("crr", "Cosmic rays removed", da))
 
     # ── Denoiser ───────────────────────────────────────────────────────
     recipe["denoise_enabled"] = bool(params.get("denoise_enabled"))
@@ -376,7 +388,7 @@ def run_stage_chain(
     if recipe["denoise_enabled"]:
         if recipe["norm3_enabled"]:
             da = stage_normalize(da, recipe["norm3"])
-            stage_records.append(("norm_post_denoise", "Normalized (final)", da))
+            stage_records.append(("norm_post_denoise", "Normalized (after denoising)", da))
         else:
             stage_records.append(("denoised", "Denoised", da))
 
@@ -396,7 +408,13 @@ def apply_exclusion(
     """
     masked = stage_exclude(ds_pre[ds_pre.attrs["final_var"]], mask, spectral_dim)
 
-    ds = ds_pre.assign({"excluded": masked}) if keep_stages else xr.Dataset({"excluded": masked})
+    if keep_stages:
+        ds = ds_pre.assign({"excluded": masked})
+    else:
+        extras: dict[str, xr.DataArray] = {}
+        if "clean_data" in ds_pre.data_vars:
+            extras["clean_data"] = ds_pre["clean_data"]
+        ds = xr.Dataset({"excluded": masked, **extras})
     ds.attrs["stage_vars"] = [*ds_pre.attrs["stage_vars"], "excluded"]
     ds.attrs["stage_labels"] = {**ds_pre.attrs["stage_labels"], "excluded": "Excluded"}
     ds.attrs["final_var"] = "excluded"

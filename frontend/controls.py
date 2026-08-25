@@ -20,12 +20,44 @@ UNIT_DEFAULT = {
     "ElectronVolt": "energy",
 }
 
-# Engine option labels — shared with the Preprocessing page's 1D/3D quick
-# presets, which seed the widget keys with these exact strings.
+# Engine option labels — shared with the Preprocessing page's Quick Setup
+# presets (per-spectrum / collection), which seed the widget keys with these
+# exact strings.
 CRR_ENGINE_1D = "1D — per spectrum"
 CRR_ENGINE_2D3D = "2D / 3D — collection & spatial"
 DENOISE_ENGINE_PCA = "PCA — population-based"
 DENOISE_ENGINE_SMOOTHER = "Smoother — per spectrum"
+
+# Defaults for keyed preprocessing widgets. Seed into session state before
+# rendering — never pass ``value=`` on the same keys (Streamlit warns when
+# both are used in one run). ``_restore_widget_state`` overwrites from
+# ``sl_pipeline_params`` when the user navigates back to this page.
+PIPELINE_WIDGET_DEFAULTS: dict[str, Any] = {
+    "cd_n_zeros": 10,
+    "crr_spike_width": 5,
+    "crr_spike_threshold": 3.5,
+    "crr_spike_passes": 3,
+    "crr_map_sensitivity": 0.01,
+    "crr_map_disk_radius": 3,
+    "crr_map_spike_width": 5,
+    "crr_map_n_components": 3,
+    "denoise_nc_int": 2,
+    "denoise_sm_window_length": 11,
+    "denoise_sm_polyorder": 3,
+    "denoise_sm_auto_lam": True,
+    "denoise_sm_lam": 100.0,
+    "denoise_sm_auto_lam_calls": 5,
+    "denoise_sm_d": 2,
+    "denoise_sm_wavelet_level": 0,
+}
+
+
+def ensure_pipeline_widget_defaults() -> None:
+    """Seed preprocessing widget keys when missing (before restore or render)."""
+    ss = st.session_state
+    for key, val in PIPELINE_WIDGET_DEFAULTS.items():
+        if key not in ss:
+            ss[key] = val
 
 
 def render_axis_controls(
@@ -92,7 +124,6 @@ def render_clean_data_params() -> dict[str, Any]:
     """Render CleanData parameter widget. Returns cd_params dict."""
     n_zeros = st.number_input(
         "Consecutive zeros to flag",
-        value=10,
         min_value=1,
         step=1,
         key="cd_n_zeros",
@@ -129,29 +160,39 @@ def render_crr_params() -> dict[str, Any]:
     with st.expander("1D engine parameters", expanded=True):
         col1, col2 = st.columns(2)
         spike_width = col1.number_input(
-            "spike_width (odd ≥ 3)",
-            value=5,
+            "Spike width (channels, odd)",
             min_value=3,
             step=2,
             key="crr_spike_width",
-            help="Medfilt window in spectral channels. Must be odd.",
+            help=(
+                "Widest cosmic-ray spike to look for, in spectral channels "
+                "(median-filter window; must be odd). Widen it if broad "
+                "spikes survive; narrow it if sharp real peaks get clipped."
+            ),
         )
         if spike_width % 2 == 0:
             spike_width += 1
         spike_threshold = col2.number_input(
-            "spike_threshold",
-            value=3.5,
+            "Detection threshold",
             min_value=0.1,
             step=0.5,
             key="crr_spike_threshold",
-            help="Spike cutoff = threshold × MAD noise. Lower = more aggressive.",
+            help=(
+                "How far above the noise level a point must stick out to "
+                "count as a spike (threshold × estimated noise). Lower = "
+                "more aggressive; raise it if real peaks are being removed."
+            ),
         )
         spike_passes = st.number_input(
-            "spike_passes",
-            value=3,
+            "Passes",
             min_value=1,
             step=1,
             key="crr_spike_passes",
+            help=(
+                "How many times detection + repair is repeated per spectrum. "
+                "Extra passes catch spikes that were masked by a larger "
+                "neighbouring spike on the first pass."
+            ),
         )
 
     # Default values used when the 2D/3D expander is hidden
@@ -165,38 +206,62 @@ def render_crr_params() -> dict[str, Any]:
         with st.expander("Collection / 3D engine parameters"):
             c1, c2 = st.columns(2)
             map_sensitivity = c1.number_input(
-                "map_sensitivity",
-                value=0.01,
+                "Sensitivity",
                 min_value=1e-4,
                 step=0.005,
                 format="%.4f",
                 key="crr_map_sensitivity",
+                help=(
+                    "How different a pixel may be from its reference before "
+                    "it is flagged as a cosmic ray. Lower = more aggressive "
+                    "(more points flagged); raise it if real features are "
+                    "being removed."
+                ),
             )
             map_disk_radius = c2.number_input(
-                "map_disk_radius",
-                value=3,
+                "Neighbourhood radius (pixels)",
                 min_value=1,
                 step=1,
                 key="crr_map_disk_radius",
+                help=(
+                    "For maps: how far around each pixel the spatial "
+                    "reference (median of neighbours) reaches. Larger = "
+                    "smoother reference, but slower and less local."
+                ),
             )
             map_spike_width = c1.number_input(
-                "map_spike_width",
-                value=5,
+                "Spike width (channels)",
                 min_value=1,
                 step=1,
                 key="crr_map_spike_width",
+                help=(
+                    "Widest cosmic-ray spike to repair, in spectral "
+                    "channels — same meaning as in the 1D engine."
+                ),
             )
             map_method = c2.selectbox(
-                "map_method",
+                "Reference method",
                 ["median", "pca"],
+                format_func={"median": "Median", "pca": "PCA"}.__getitem__,
                 key="crr_map_method",
+                help=(
+                    "How the clean reference for line scans / series is "
+                    "built: **Median** of all spectra (robust default) or a "
+                    "low-rank **PCA** reconstruction (better when spectra "
+                    "vary strongly across the scan)."
+                ),
             )
             map_n_components = st.number_input(
-                "map_n_components (PCA)",
-                value=3,
+                "PCA components",
                 min_value=1,
                 step=1,
                 key="crr_map_n_components",
+                help=(
+                    "Only used with the PCA reference method: how many "
+                    "principal components the reference keeps. More "
+                    "components follow real variation more closely but may "
+                    "start reproducing the spikes themselves."
+                ),
             )
 
     return dict(
@@ -232,39 +297,41 @@ def render_denoising_params() -> dict[str, Any]:
 
     nc_type = "mle"
     nc_int = 2
-    nc_float = 0.95
     subtract_min = True
     restore_min = False
 
     if not per_spectrum:
         with st.expander("PCA parameters", expanded=True):
+            # Older sessions may still hold the removed "float" / "None"
+            # choices in widget state — fall back to automatic.
+            if st.session_state.get("denoise_nc_type") not in (None, "mle", "int"):
+                st.session_state["denoise_nc_type"] = "mle"
             nc_type = st.selectbox(
-                "n_components",
-                ["mle", "int", "float", "None"],
+                "Number of components",
+                ["mle", "int"],
+                format_func={
+                    "mle": "Automatic",
+                    "int": "Fixed count",
+                }.__getitem__,
                 key="denoise_nc_type",
                 help=(
-                    "**mle** — automatic (Minka's MLE); recommended default.\n\n"
-                    "**int** — fixed number of components to keep.\n\n"
-                    "**float** — retain this fraction of explained variance (0–1).\n\n"
-                    "**None** — use min(n_spectra, n_channels)."
+                    "**Automatic** (recommended): estimates how many components "
+                    "carry real signal (Minka's MLE).\n\n"
+                    "**Fixed count**: keep exactly this many components — use "
+                    "when you already know how many distinct spectral shapes "
+                    "the dataset contains."
                 ),
             )
             if nc_type == "int":
                 nc_int = st.number_input(
-                    "n_components (count)",
-                    value=2,
+                    "Component count",
                     min_value=1,
                     step=1,
                     key="denoise_nc_int",
-                )
-            elif nc_type == "float":
-                nc_float = st.number_input(
-                    "n_components (variance ratio)",
-                    value=0.95,
-                    min_value=0.01,
-                    max_value=0.9999,
-                    step=0.01,
-                    key="denoise_nc_float",
+                    help=(
+                        "How many principal components to keep. Too few "
+                        "flattens real features; too many lets noise back in."
+                    ),
                 )
             baseline = st.selectbox(
                 "Baseline handling",
@@ -317,21 +384,28 @@ def render_denoising_params() -> dict[str, Any]:
             if sm_method == "savgol":
                 sc1, sc2 = st.columns(2)
                 sm_wl = sc1.number_input(
-                    "window_length (odd ≥ 3)",
-                    value=11,
+                    "Window size (points, odd)",
                     min_value=3,
                     step=2,
                     key="denoise_sm_window_length",
+                    help=(
+                        "How many neighbouring points each polynomial fit "
+                        "spans (must be odd). Larger = smoother but risks "
+                        "flattening narrow peaks."
+                    ),
                 )
                 if sm_wl % 2 == 0:
                     sm_wl += 1
                 sm_po = sc2.number_input(
-                    "polyorder",
-                    value=3,
+                    "Polynomial order",
                     min_value=1,
                     max_value=int(sm_wl) - 1,
                     step=1,
                     key="denoise_sm_polyorder",
+                    help=(
+                        "Order of the polynomial fitted inside each window. "
+                        "Higher preserves peak shape better but smooths less."
+                    ),
                 )
                 smoother_params = dict(
                     method="savgol",
@@ -346,33 +420,49 @@ def render_denoising_params() -> dict[str, Any]:
                 )
             elif sm_method == "whittaker":
                 use_auto_lam = st.checkbox(
-                    "Auto λ (GCV minimisation)",
-                    value=True,
+                    "Automatic smoothness (recommended)",
                     key="denoise_sm_auto_lam",
+                    help=(
+                        "Picks the smoothness λ automatically by generalised "
+                        "cross-validation (GCV). Untick to set λ yourself."
+                    ),
                 )
                 sc1, sc2 = st.columns(2)
                 sm_lam: float | None = None
+                sm_alc = 5
                 if not use_auto_lam:
                     sm_lam = sc1.number_input(
-                        "λ (lam)",
-                        value=100.0,
+                        "Smoothness (λ)",
                         min_value=0.001,
                         step=10.0,
                         key="denoise_sm_lam",
+                        help=(
+                            "Trade-off between following the data and "
+                            "smoothness. Larger = smoother; spans orders of "
+                            "magnitude, so try ×10 / ÷10 steps."
+                        ),
+                    )
+                else:
+                    sm_alc = st.number_input(
+                        "Search steps for automatic λ",
+                        min_value=1,
+                        step=1,
+                        key="denoise_sm_auto_lam_calls",
+                        help=(
+                            "How many λ values the automatic search tries. "
+                            "More steps = slightly better λ, slower run — 5 "
+                            "is enough for most data."
+                        ),
                     )
                 sm_d = sc2.number_input(
-                    "d (difference order)",
-                    value=2,
+                    "Difference order",
                     min_value=1,
                     step=1,
                     key="denoise_sm_d",
-                )
-                sm_alc = st.number_input(
-                    "auto_lam_calls",
-                    value=5,
-                    min_value=1,
-                    step=1,
-                    key="denoise_sm_auto_lam_calls",
+                    help=(
+                        "Order of the smoothness penalty. 2 (default) "
+                        "penalises curvature and suits nearly all spectra."
+                    ),
                 )
                 smoother_params = dict(
                     method="whittaker",
@@ -411,7 +501,6 @@ def render_denoising_params() -> dict[str, Any]:
                 )
                 wv_level = st.number_input(
                     "Decomposition level (0 = auto)",
-                    value=0,
                     min_value=0,
                     step=1,
                     key="denoise_sm_wavelet_level",
@@ -432,7 +521,6 @@ def render_denoising_params() -> dict[str, Any]:
     return dict(
         n_components_type=nc_type,
         n_components_int=nc_int,
-        n_components_float=nc_float,
         subtract_min=subtract_min,
         restore_min=restore_min,
         per_spectrum=per_spectrum,
@@ -466,18 +554,25 @@ def render_nmf_params() -> dict[str, Any]:
         )
         col1, col2 = st.columns(2)
         max_iter = col1.number_input(
-            "max_iter",
+            "Max iterations",
             value=500,
             min_value=50,
             step=50,
             key="nmf_max_iter",
+            help=(
+                "Hard cap on optimisation iterations. Raise it if the fit reports non-convergence."
+            ),
         )
         random_state = col2.number_input(
-            "random_state (seed)",
+            "Random seed",
             value=0,
             min_value=0,
             step=1,
             key="nmf_random_state",
+            help=(
+                "Seed for the random initialisation — keeps repeated runs "
+                "reproducible. Only matters with random init."
+            ),
         )
     return dict(
         init=init,
@@ -500,7 +595,7 @@ def render_mcr_params() -> dict[str, Any]:
     with st.expander("Advanced MCR-ALS parameters", expanded=False):
         col1, col2 = st.columns(2)
         max_iter = col1.number_input(
-            "max_iter",
+            "Max iterations",
             value=200,
             min_value=20,
             step=20,
@@ -539,7 +634,7 @@ def render_mcr_params() -> dict[str, Any]:
             ),
         )
         random_state = col4.number_input(
-            "random_state (seed)",
+            "Random seed",
             value=0,
             min_value=0,
             step=1,
