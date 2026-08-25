@@ -47,9 +47,10 @@ Session state
 Caches
 ------
 ``_make_final_echarts_cached`` — final-chart ECharts options, keyed on file
-hash + pipeline params. Pipeline stage caching itself lives in
-``frontend/pipeline_cache.py``; this page requests ``keep_stages=True``
-(the Progress tab is the one consumer of intermediate stages).
+hash + pipeline params. ``_make_progress_echarts_cached`` and
+``_make_comparison_echarts_cached`` cover the Steps / comparison charts.
+Pipeline stage caching itself lives in ``frontend/pipeline_cache.py``; this
+page requests ``keep_stages=True`` only while the Steps chart tab is open.
 """
 
 from __future__ import annotations
@@ -529,6 +530,10 @@ def _render_stage_tabs(
             cd_params: dict[str, Any] = {}
             if cd_enabled:
                 cd_params = render_clean_data_params()
+                if "n_zeros" not in cd_params:
+                    cd_params = {
+                        "n_zeros": int(st.session_state.get("cd_n_zeros", 10)),
+                    }
                 # Filled by _render_cd_removed_visual after the pipeline runs.
                 cd_visual_slot = st.container()
 
@@ -675,8 +680,8 @@ def _wrap_line_mask(mask: np.ndarray, ncols: int = _CD_WRAP_COLS) -> tuple[np.nd
 def _render_cd_removed_visual(slot, all_datasets: dict, loaded: dict[str, Any]) -> None:
     """Fill the Clean Data tab's placeholder with per-file removal grids.
 
-    Reads the ``clean_data`` stage variable out of the pipeline result (this
-    page runs ``keep_stages=True``), so it always reflects exactly what the
+    Reads the ``clean_data`` stage variable out of the pipeline result (retained
+    even when ``keep_stages=False``), so it always reflects exactly what the
     current parameters removed.
     """
     multi = len(all_datasets) > 1
@@ -780,10 +785,57 @@ def _render_excl_visual(slot, all_datasets: dict, loaded: dict[str, Any]) -> Non
 def _run_preprocessing(
     loaded: dict[str, Any],
     pipeline_params: dict[str, Any],
+    *,
+    keep_stages: bool = False,
 ) -> tuple[dict, list[str]]:
     with st.spinner(f"Processing {len(loaded)} file(s)…"):
-        # keep_stages: the Progress tab is the one consumer of intermediates.
-        return get_finals(loaded, pipeline_params, keep_stages=True)
+        return get_finals(loaded, pipeline_params, keep_stages=keep_stages)
+
+
+@st.cache_data(show_spinner=False, max_entries=16)
+def _make_progress_echarts_cached(
+    file_hash: str,
+    pipeline_params: dict,
+    _ds,
+    title: str,
+    x_unit: str,
+    laser_nm: float | None,
+    src_unit: str,
+    native_type: str,
+    x_range: tuple[float, float],
+) -> dict:
+    return make_progress_echarts(
+        stage_dict(_ds),
+        title=title,
+        x_unit=x_unit,
+        laser_nm=laser_nm,
+        src_unit=src_unit,
+        native_type=native_type,
+        x_range=x_range,
+    )
+
+
+@st.cache_data(show_spinner=False, max_entries=16)
+def _make_comparison_echarts_cached(
+    file_hashes: str,
+    pipeline_params: dict,
+    _finals: dict,
+    title: str,
+    x_unit: str,
+    laser_nm: float | None,
+    src_unit: str,
+    native_type: str,
+    x_range: tuple[float, float] | None = None,
+) -> dict:
+    return make_comparison_echarts(
+        _finals,
+        title=title,
+        x_unit=x_unit,
+        laser_nm=laser_nm,
+        src_unit=src_unit,
+        native_type=native_type,
+        x_range=x_range,
+    )
 
 
 @st.cache_data(show_spinner=False, max_entries=16)
@@ -815,6 +867,8 @@ def _render_progress_tab(
     pipeline_params: dict[str, Any],
     multi: bool,
     ref_ds: SpectralDataset,
+    *,
+    render_chart: bool = True,
 ) -> None:
     default_unit = UNIT_DEFAULT.get(ref_ds.spectral_units, "wavelength")
     current_unit = st.session_state.get("prog_x_unit", default_unit)
@@ -880,27 +934,35 @@ def _render_progress_tab(
     with col_title:
         chart_title = st.text_input("Chart title", value=default_title, key="prog_title")
 
+    if not render_chart:
+        return
+
     if multi:
         finals = {name: final_da(ds) for name, ds in all_datasets.items()}
-        opts = make_comparison_echarts(
+        file_hashes = ",".join(sorted(loaded[name]["hash"] for name in all_datasets))
+        opts = _make_comparison_echarts_cached(
+            file_hashes,
+            pipeline_params,
             finals,
-            title=chart_title,
-            x_unit=x_unit,
-            laser_nm=laser,
-            src_unit=ref_ds.spectral_unit,
-            native_type=ref_ds.spectral_units,
+            chart_title,
+            x_unit,
+            laser,
+            ref_ds.spectral_unit,
+            ref_ds.spectral_units,
             x_range=x_range,
         )
     else:
         name = next(iter(all_datasets))
-        opts = make_progress_echarts(
-            stage_dict(all_datasets[name]),
-            title=chart_title,
-            x_unit=x_unit,
-            laser_nm=laser,
-            src_unit=ref_ds.spectral_unit,
-            native_type=ref_ds.spectral_units,
-            x_range=x_range,
+        opts = _make_progress_echarts_cached(
+            loaded[name]["hash"],
+            pipeline_params,
+            all_datasets[name],
+            chart_title,
+            x_unit,
+            laser,
+            ref_ds.spectral_unit,
+            ref_ds.spectral_units,
+            x_range,
         )
 
     st_echarts(opts, height="72vh", key="progress_chart")
@@ -1056,6 +1118,8 @@ def _render_final_tab(
     pipeline_params: dict[str, Any],
     multi: bool,
     ref_ds: SpectralDataset,
+    *,
+    render_chart: bool = True,
 ) -> None:
     if multi:
         view_mode = st.radio(
@@ -1076,19 +1140,23 @@ def _render_final_tab(
             ref_ds.laser_nm,
             native_type=ref_ds.spectral_units,
         )
-        finals = {name: final_da(ds) for name, ds in all_datasets.items()}
-        st_echarts(
-            make_comparison_echarts(
-                finals,
-                title=chart_title,
-                x_unit=x_unit,
-                laser_nm=laser,
-                src_unit=ref_ds.spectral_unit,
-                native_type=ref_ds.spectral_units,
-            ),
-            height="72vh",
-            key="final_comparison",
-        )
+        if render_chart:
+            finals = {name: final_da(ds) for name, ds in all_datasets.items()}
+            file_hashes = ",".join(sorted(loaded[name]["hash"] for name in all_datasets))
+            st_echarts(
+                _make_comparison_echarts_cached(
+                    file_hashes,
+                    pipeline_params,
+                    finals,
+                    chart_title,
+                    x_unit,
+                    laser,
+                    ref_ds.spectral_unit,
+                    ref_ds.spectral_units,
+                ),
+                height="72vh",
+                key="final_comparison",
+            )
 
     else:
         if multi:
@@ -1143,6 +1211,9 @@ def _render_final_tab(
                 f"Nothing to plot — {browse_label or 'this file'} is entirely "
                 "removed (Clean Data) or manually excluded."
             )
+            return
+
+        if not render_chart:
             return
 
         if browse_mode == _BROWSE_ALL:
@@ -1229,6 +1300,8 @@ def _render_selection_tab(
     all_datasets: dict,
     loaded: dict[str, Any],
     pipeline_params: dict[str, Any],
+    *,
+    render_chart: bool = True,
 ) -> None:
     """Interactive pixel picker — click / box / lasso to exclude or restore."""
     fname = st.session_state.get("excl_file") or next(iter(all_datasets), None)
@@ -1268,6 +1341,13 @@ def _render_selection_tab(
     auto_mask = _cd_removed_mask(da_ctx, spectral_dim)
 
     colorscale, map_opacity = render_map_display_controls("excl")
+    if not render_chart:
+        st.caption(
+            f"{int(user_mask.sum())} excluded · {int((auto_mask & ~user_mask).sum())} "
+            f"auto-removed · {n_row * n_col} total"
+        )
+        return
+
     fig = make_selection_map_fig(
         z,
         da_ctx.coords[da_ctx.dims[0]].values,
@@ -1309,27 +1389,58 @@ def _render_selection_tab(
     )
 
 
-@st.fragment
-def _render_charts_fragment(
-    all_datasets: dict,
+def _chart_tab_steps_active(tab_prog, tab_final, tab_sel) -> bool:
+    """True when the Steps chart tab is selected (including its default on first load)."""
+    if tab_final.open is True or tab_sel.open is True:
+        return False
+    return tab_prog.open is not False
+
+
+def _render_charts_section(
     loaded: dict[str, Any],
     pipeline_params: dict[str, Any],
     multi: bool,
     ref_ds: SpectralDataset,
-) -> None:
-    """Fragment that owns the chart tabs.
+) -> tuple[dict, list[str]]:
+    """Right-column chart tabs; returns ``(all_datasets, errors)``."""
+    tab_prog, tab_final, tab_sel = st.tabs(
+        ["Steps", "Final", "Selection"],
+        on_change="rerun",
+    )
+    keep_stages = _chart_tab_steps_active(tab_prog, tab_final, tab_sel)
+    all_datasets, errors = _run_preprocessing(
+        loaded,
+        pipeline_params,
+        keep_stages=keep_stages,
+    )
 
-    Creating st.tabs() inside the fragment (rather than passing tab objects
-    in from outside) is required by Streamlit's fragment contract: fragments
-    may only render into containers they create themselves.
-    """
-    tab_prog, tab_final, tab_sel = st.tabs(["Steps", "Final", "Selection"])
     with tab_prog:
-        _render_progress_tab(all_datasets, loaded, pipeline_params, multi, ref_ds)
+        _render_progress_tab(
+            all_datasets,
+            loaded,
+            pipeline_params,
+            multi,
+            ref_ds,
+            render_chart=tab_prog.open is True,
+        )
     with tab_final:
-        _render_final_tab(all_datasets, loaded, pipeline_params, multi, ref_ds)
+        _render_final_tab(
+            all_datasets,
+            loaded,
+            pipeline_params,
+            multi,
+            ref_ds,
+            render_chart=tab_final.open is True,
+        )
     with tab_sel:
-        _render_selection_tab(all_datasets, loaded, pipeline_params)
+        _render_selection_tab(
+            all_datasets,
+            loaded,
+            pipeline_params,
+            render_chart=tab_sel.open is True,
+        )
+
+    return all_datasets, errors
 
 
 # ────────────────────────────── Page assembly ──────────────────────────────
@@ -1367,19 +1478,21 @@ def render_preprocessing_page() -> None:
                 "Use a Quick Setup preset or enable steps on the left."
             )
 
-        all_datasets, errors = _run_preprocessing(loaded, pipeline_params)
+        multi = len(loaded) > 1
+        all_datasets, errors = _render_charts_section(
+            loaded,
+            pipeline_params,
+            multi,
+            ref_ds,
+        )
 
         for err in errors:
             st.error(f"Processing error — {err}")
         if not all_datasets:
             st.stop()
 
-        multi = len(all_datasets) > 1
-
-        _render_charts_fragment(all_datasets, loaded, pipeline_params, multi, ref_ds)
-
     # Fill the Clean Data / Exclude tab placeholders now that the pipeline has
-    # run. Outside the charts fragment, so fragment-only reruns leave them intact.
+    # run.
     if cd_visual_slot is not None:
         _render_cd_removed_visual(cd_visual_slot, all_datasets, loaded)
     if excl_visual_slot is not None:

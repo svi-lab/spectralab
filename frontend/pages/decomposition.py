@@ -270,26 +270,28 @@ def _render_mcr_results(mcr_result, ds, map_name):
     )
 
     tab_components, tab_maps, tab_amb, tab_stats = st.tabs(
-        ["Component Spectra", "Concentration Maps", "Ambiguity", "Statistics"]
+        ["Component Spectra", "Concentration Maps", "Ambiguity", "Statistics"],
+        on_change="rerun",
     )
 
     with tab_components:
         comp_title = st.text_input(
             "Chart title", value="Pure-Component Spectra", key="mcr_comp_title"
         )
-        st_echarts(
-            make_components_echarts(
-                mcr_result["components"],
-                mcr_result["spectral_coords"],
-                mcr_result["spectral_dim"],
-                title=comp_title,
-                x_unit=_X_UNIT,
-                laser_nm=ds.laser_nm,
-                src_unit=ds.spectral_unit,
-                native_type=ds.spectral_units,
-            ),
-            height="72vh",
-        )
+        if tab_components.open is True:
+            st_echarts(
+                make_components_echarts(
+                    mcr_result["components"],
+                    mcr_result["spectral_coords"],
+                    mcr_result["spectral_dim"],
+                    title=comp_title,
+                    x_unit=_X_UNIT,
+                    laser_nm=ds.laser_nm,
+                    src_unit=ds.spectral_unit,
+                    native_type=ds.spectral_units,
+                ),
+                height="72vh",
+            )
 
     with tab_maps:
         n_comp = mcr_result["components"].shape[0]
@@ -302,25 +304,29 @@ def _render_mcr_results(mcr_result, ds, map_name):
         )
         with c_display:
             colorscale, map_opacity = render_map_display_controls("mcr_map", inline=True)
-        abundances = mcr_result["abundances"]
-        z = abundances.isel(component=comp_idx).values
-        row_coords = abundances.coords["row"].values
-        col_coords = abundances.coords["column"].values
-        fig = make_scalar_map_fig(
-            z,
-            row_coords,
-            col_coords,
-            ds.image_arr,
-            ds.image_meta,
-            cbar_label=f"Component {comp_idx + 1} concentration",
-            title=f"{map_name} — Component {comp_idx + 1}",
-            colorscale=colorscale,
-            map_opacity=map_opacity,
-        )
-        st.plotly_chart(fig, width="stretch", height=550, config=PLOTLY_CONFIG)
+        if tab_maps.open is True:
+            abundances = mcr_result["abundances"]
+            z = abundances.isel(component=comp_idx).values
+            row_coords = abundances.coords["row"].values
+            col_coords = abundances.coords["column"].values
+            fig = make_scalar_map_fig(
+                z,
+                row_coords,
+                col_coords,
+                ds.image_arr,
+                ds.image_meta,
+                cbar_label=f"Component {comp_idx + 1} concentration",
+                title=f"{map_name} — Component {comp_idx + 1}",
+                colorscale=colorscale,
+                map_opacity=map_opacity,
+            )
+            st.plotly_chart(fig, width="stretch", height=550, config=PLOTLY_CONFIG)
 
     with tab_amb:
-        _render_ambiguity_tab(mcr_result, ds)
+        if tab_amb.open is True:
+            _render_ambiguity_tab(mcr_result, ds)
+        else:
+            st.caption("Open this tab to view rotational-ambiguity diagnostics.")
 
     with tab_stats:
         meta = mcr_result["meta"]
@@ -526,26 +532,28 @@ def _render_nmf(left, right, da_map, ds, map_name):
             )
 
             tab_components, tab_maps, tab_stats = st.tabs(
-                ["Component Spectra", "Abundance Maps", "Statistics"]
+                ["Component Spectra", "Abundance Maps", "Statistics"],
+                on_change="rerun",
             )
 
             with tab_components:
                 comp_title = st.text_input(
                     "Chart title", value="Component Spectra", key="nmf_comp_title"
                 )
-                st_echarts(
-                    make_components_echarts(
-                        nmf_result["components"],
-                        nmf_result["spectral_coords"],
-                        nmf_result["spectral_dim"],
-                        title=comp_title,
-                        x_unit=_X_UNIT,
-                        laser_nm=ds.laser_nm,
-                        src_unit=ds.spectral_unit,
-                        native_type=ds.spectral_units,
-                    ),
-                    height="72vh",
-                )
+                if tab_components.open is True:
+                    st_echarts(
+                        make_components_echarts(
+                            nmf_result["components"],
+                            nmf_result["spectral_coords"],
+                            nmf_result["spectral_dim"],
+                            title=comp_title,
+                            x_unit=_X_UNIT,
+                            laser_nm=ds.laser_nm,
+                            src_unit=ds.spectral_unit,
+                            native_type=ds.spectral_units,
+                        ),
+                        height="72vh",
+                    )
 
             with tab_maps:
                 n_comp = nmf_result["components"].shape[0]
@@ -558,22 +566,23 @@ def _render_nmf(left, right, da_map, ds, map_name):
                 )
                 with c_display:
                     colorscale, map_opacity = render_map_display_controls("nmf_map", inline=True)
-                abundances = nmf_result["abundances"]
-                z = abundances.isel(component=comp_idx).values
-                row_coords = abundances.coords["row"].values
-                col_coords = abundances.coords["column"].values
-                fig = make_scalar_map_fig(
-                    z,
-                    row_coords,
-                    col_coords,
-                    ds.image_arr,
-                    ds.image_meta,
-                    cbar_label=f"Component {comp_idx + 1} abundance",
-                    title=f"{map_name} — Component {comp_idx + 1}",
-                    colorscale=colorscale,
-                    map_opacity=map_opacity,
-                )
-                st.plotly_chart(fig, width="stretch", height=550, config=PLOTLY_CONFIG)
+                if tab_maps.open is True:
+                    abundances = nmf_result["abundances"]
+                    z = abundances.isel(component=comp_idx).values
+                    row_coords = abundances.coords["row"].values
+                    col_coords = abundances.coords["column"].values
+                    fig = make_scalar_map_fig(
+                        z,
+                        row_coords,
+                        col_coords,
+                        ds.image_arr,
+                        ds.image_meta,
+                        cbar_label=f"Component {comp_idx + 1} abundance",
+                        title=f"{map_name} — Component {comp_idx + 1}",
+                        colorscale=colorscale,
+                        map_opacity=map_opacity,
+                    )
+                    st.plotly_chart(fig, width="stretch", height=550, config=PLOTLY_CONFIG)
 
             with tab_stats:
                 meta = nmf_result["meta"]

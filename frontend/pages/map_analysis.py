@@ -265,8 +265,6 @@ def render_map_page() -> None:
         st.stop()
 
     pipeline_params = st.session_state.get("sl_pipeline_params") or default_pipeline_params()
-    with st.spinner("Preparing data…"):
-        all_datasets, _errors = get_finals(loaded, pipeline_params)
 
     map_candidates = {name: entry for name, entry in loaded.items() if entry["dataset"].is_map}
 
@@ -276,6 +274,9 @@ def render_map_page() -> None:
             "The loaded file(s) contain single spectra or line scans."
         )
         return
+
+    with st.spinner("Preparing data…"):
+        all_datasets, _errors = get_finals(map_candidates, pipeline_params)
 
     left, right = st.columns([1, 2], gap="medium")
 

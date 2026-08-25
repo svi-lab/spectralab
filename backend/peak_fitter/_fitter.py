@@ -106,24 +106,16 @@ def _estimate_amplitude_guess(x: np.ndarray, y: np.ndarray, center: float, sigma
     return height * sigma * np.sqrt(2 * np.pi)
 
 
-def _build_composite_model(
+def _initial_params(
     x: np.ndarray,
     y: np.ndarray,
     bands: list[BandSpec],
-) -> tuple[Any, Parameters, list[str]]:
-    bad_shapes = [b.shape for b in bands if b.shape != "gaussian"]
-    if bad_shapes:
-        raise NotImplementedError(f"Only shape='gaussian' is implemented; got {bad_shapes}")
-
-    model = None
+    prefixes: list[str],
+) -> Parameters:
+    """Starting ``Parameters`` for a composite model with known ``prefixes``."""
     params = Parameters()
-    prefixes: list[str] = []
-    for i, band in enumerate(bands):
-        prefix = f"b{i}_"
-        prefixes.append(prefix)
+    for band, prefix in zip(bands, prefixes):
         gm = GaussianModel(prefix=prefix)
-        model = gm if model is None else model + gm
-
         sigma_guess = (
             band.sigma_guess
             if band.sigma_guess is not None
@@ -134,7 +126,6 @@ def _build_composite_model(
             if band.amplitude_guess is not None
             else _estimate_amplitude_guess(x, y, band.center_guess, sigma_guess)
         )
-
         p = gm.make_params()
         p[f"{prefix}center"].set(value=band.center_guess, min=band.center_min, max=band.center_max)
         p[f"{prefix}sigma"].set(
@@ -144,8 +135,38 @@ def _build_composite_model(
         )
         p[f"{prefix}amplitude"].set(value=amplitude_guess, min=0)
         params.update(p)
+    return params
 
+
+def _build_composite_model(
+    x: np.ndarray,
+    y: np.ndarray,
+    bands: list[BandSpec],
+) -> tuple[Any, Parameters, list[str]]:
+    bad_shapes = [b.shape for b in bands if b.shape != "gaussian"]
+    if bad_shapes:
+        raise NotImplementedError(f"Only shape='gaussian' is implemented; got {bad_shapes}")
+
+    model = None
+    prefixes: list[str] = []
+    for i, _band in enumerate(bands):
+        prefix = f"b{i}_"
+        prefixes.append(prefix)
+        gm = GaussianModel(prefix=prefix)
+        model = gm if model is None else model + gm
+
+    params = _initial_params(x, y, bands, prefixes)
     return model, params, prefixes
+
+
+def _apply_params_init(params: Parameters, params_init: Parameters) -> None:
+    for name in params:
+        if name in params_init:
+            params[name].set(
+                value=params_init[name].value,
+                min=params_init[name].min,
+                max=params_init[name].max,
+            )
 
 
 class PeakFitter:
@@ -158,6 +179,10 @@ class PeakFitter:
         bands: list[BandSpec],
         *,
         params_init: Parameters | None = None,
+        curves: bool = True,
+        max_nfev: int | None = None,
+        model: Any | None = None,
+        prefixes: list[str] | None = None,
     ) -> FitResult:
         """Build a composite Gaussian model from ``bands``, fit, and return
         per-band parameters plus overall fit statistics.
@@ -170,6 +195,10 @@ class PeakFitter:
         converged parameters (values *and* bounds) instead of the
         ``bands`` guesses — used by :func:`peak_fitter.fit_map_gaussian` to
         warm-start neighboring pixels.
+
+        Pass a pre-built ``model`` / ``prefixes`` (batch map mode) to skip
+        reconstructing the composite model on every pixel. Set ``curves=False``
+        to omit per-band component curves (map batch only needs scalars).
         """
         if not bands:
             raise ValueError("PeakFitter.fit needs at least one BandSpec")
@@ -185,26 +214,28 @@ class PeakFitter:
                 f"band(s): need >= {3 * len(bands)}, got {x_fit.size}"
             )
 
-        model, params, prefixes = _build_composite_model(x_fit, y_fit_data, bands)
+        if model is None or prefixes is None:
+            model, params, prefixes = _build_composite_model(x_fit, y_fit_data, bands)
+        else:
+            params = _initial_params(x_fit, y_fit_data, bands, prefixes)
+
         if params_init is not None:
-            for name in params:
-                if name in params_init:
-                    params[name].set(
-                        value=params_init[name].value,
-                        min=params_init[name].min,
-                        max=params_init[name].max,
-                    )
+            _apply_params_init(params, params_init)
+
+        fit_kwargs: dict[str, Any] = {}
+        if max_nfev is not None:
+            fit_kwargs["max_nfev"] = max_nfev
 
         # lmfit's default 'leastsq' (MINPACK) handles bounds via an internal
         # reparametrization that conditions badly for tightly-bounded parameters
         # (e.g. closely-spaced preset bands) -- it can burn through the entire
         # max_nfev budget without converging. scipy's natively-bounded
         # 'least_squares' handles the same problem in a fraction of the calls.
-        result = model.fit(y_fit_data, params, x=x_fit, method="least_squares")
+        result = model.fit(y_fit_data, params, x=x_fit, method="least_squares", **fit_kwargs)
 
         y_fit_curve = result.eval(x=x_fit)
         residual = y_fit_data - y_fit_curve
-        comps = result.eval_components(x=x_fit)
+        comps = result.eval_components(x=x_fit) if curves else None
 
         amplitudes = [result.params[f"{p}amplitude"].value for p in prefixes]
         total_area = sum(amplitudes) or 1.0
@@ -216,6 +247,7 @@ class PeakFitter:
             cen = result.params[f"{prefix}center"]
             sig = result.params[f"{prefix}sigma"]
             fwhm = result.params[f"{prefix}fwhm"]
+            curve = np.asarray(comps[prefix]) if comps is not None else np.array([])
             bands_out.append(
                 BandResult(
                     label=label,
@@ -229,7 +261,7 @@ class PeakFitter:
                     fwhm_stderr=fwhm.stderr,
                     area=amp.value,
                     area_pct=100.0 * amp.value / total_area,
-                    curve=np.asarray(comps[prefix]),
+                    curve=curve,
                 )
             )
 
@@ -255,4 +287,4 @@ class PeakFitter:
         )
 
 
-__all__ = ["PeakFitter", "BandSpec", "BandResult", "FitResult"]
+__all__ = ["PeakFitter", "BandSpec", "BandResult", "FitResult", "_build_composite_model"]

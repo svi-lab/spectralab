@@ -99,3 +99,36 @@ def test_apply_exclusion_on_keep_stages_false_only_stores_final():
     assert list(out.data_vars) == ["excluded"]
     assert out.attrs["final_var"] == "excluded"
     assert "norm_before" in out.attrs["stage_vars"]
+
+
+def test_keep_stages_false_retains_clean_data_for_removal_grid():
+    values = gaussian_map()
+    values[1, 1, 10] = 0.0
+    ds = make_map(values)
+    params = default_pipeline_params()
+    params["cd_enabled"] = True
+    params["cd"] = {"n_zeros": 1}
+    params["norm1_enabled"] = True
+    params["norm1"] = {"method": "min_max"}
+    out = run_stage_chain(ds, params, keep_stages=False)
+    assert "clean_data" in out.data_vars
+    assert out.attrs["final_var"] == "norm_before"
+    cd_mask = np.all(np.isnan(out["clean_data"].values), axis=-1)
+    assert cd_mask[1, 1]
+    assert cd_mask.sum() == 1
+
+
+def test_apply_exclusion_keep_stages_false_preserves_clean_data():
+    values = gaussian_map()
+    values[0, 0, 8] = 0.0
+    ds = make_map(values)
+    params = default_pipeline_params()
+    params["cd_enabled"] = True
+    params["cd"] = {"n_zeros": 1}
+    pre = run_stage_chain(ds, params, keep_stages=False)
+    mask = np.zeros(ds.da.shape[:2], dtype=bool)
+    mask[2, 2] = True
+    out = apply_exclusion(pre, mask, ds.spectral_dim, keep_stages=False)
+    assert "clean_data" in out.data_vars
+    assert "excluded" in out.data_vars
+    assert out.attrs["final_var"] == "excluded"
