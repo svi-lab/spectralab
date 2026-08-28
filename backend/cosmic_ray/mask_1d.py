@@ -7,7 +7,38 @@ import warnings
 import numpy as np
 from scipy.signal import medfilt
 
-from ._mad import noise_estimate_too_small, robust_mad_noise_with_floor
+from ._mad import local_mad_noise, noise_estimate_too_small, robust_mad_noise_with_floor
+
+# Block size (channels) for the local noise estimate used by the narrow and
+# broad passes. Small enough to track a shot-noise baseline that ramps by an
+# order of magnitude across the spectrum; large enough for a stable MAD
+# (needs several dozen points per block).
+_LOCAL_NOISE_WINDOW_CHANNELS: int = 200
+
+# Broad-pass kernel multipliers, tried in order after the narrow passes.
+# `4*W+1` alone misses a cosmic ray whose width is close to `2*W` (it then
+# occupies >=50% of the kernel and dominates the running median instead of
+# standing out from it); `8*W+1` catches what the first rung misses without
+# requiring the user to size `broad_spike_width` exactly.
+_BROAD_KERNEL_MULTIPLIERS: tuple[int, ...] = (4, 8)
+
+# A wide CR's decaying edges taper gradually enough that the last channel or
+# two before returning to baseline can sit just under the detection cutoff
+# (they're only marginally elevated). A wider dilation than the narrow
+# pass's +/-1 sweeps those residual shoulders in too; harmless for real
+# features since it only ever grows a broad-pass hit, and the broad pass
+# itself already excludes anything narrow enough to be a real PL peak.
+_BROAD_DILATE_CHANNELS: int = 3
+
+# A genuinely broad CR sits above the oversized broad-pass median across
+# essentially its whole width, so it survives as one long contiguous run.
+# A real narrow peak's residual against that same oversized reference
+# crosses the threshold only where its cap pokes furthest above the
+# (much lower) broad median — a handful of isolated channels, not a
+# sustained run. Dropping runs shorter than this fraction of
+# broad_spike_width tells the two apart without touching narrow-pass
+# detections at all.
+_BROAD_MIN_RUN_FRACTION: float = 0.15
 
 # SNIP iterations used for repair when broad detection is disabled.
 _SNIP_REPAIR_ITERATIONS_DEFAULT: int = 15
@@ -101,11 +132,26 @@ def _coerce_float_1d_spectrum(y: np.ndarray, kernel_size: int) -> np.ndarray:
     return arr
 
 
-def _dilate_mask_1d(mask: np.ndarray) -> np.ndarray:
-    """Expand a boolean mask by 1 channel on each side."""
+def _dilate_mask_1d(mask: np.ndarray, n: int = 1) -> np.ndarray:
+    """Expand a boolean mask by ``n`` channels on each side."""
     out = mask.copy()
-    out[1:] |= mask[:-1]
-    out[:-1] |= mask[1:]
+    for _ in range(n):
+        grown = out.copy()
+        grown[1:] |= out[:-1]
+        grown[:-1] |= out[1:]
+        out = grown
+    return out
+
+
+def _drop_short_runs(mask: np.ndarray, min_run: int) -> np.ndarray:
+    """Clear every contiguous run of ``True`` shorter than ``min_run``."""
+    if min_run <= 1 or not np.any(mask):
+        return mask
+    out = mask.copy()
+    idx = np.flatnonzero(mask)
+    for run in np.split(idx, np.where(np.diff(idx) > 1)[0] + 1):
+        if run.size < min_run:
+            out[run] = False
     return out
 
 
@@ -138,10 +184,15 @@ def positive_spike_mask_vs_median_smooth(
     y: np.ndarray,
     median_smoothed_y: np.ndarray,
     threshold_multiplier: float,
-) -> tuple[np.ndarray, float]:
+    *,
+    noise: np.ndarray | float | None = None,
+) -> tuple[np.ndarray, float | np.ndarray]:
     """Mask where positive residual exceeds the MAD gate *and* a relative floor.
 
-    Residual is y − median_smoothed_y; noise is scaled MAD of residual.
+    Residual is y − median_smoothed_y. ``noise`` is the per-channel (or
+    scalar) noise scale to gate against; when ``None`` (default, and what
+    every caller outside this module still gets) it falls back to a single
+    scaled-MAD-of-residual for the whole trace — the original behaviour.
     A cosmic ray must also exceed ``_MIN_RELATIVE_RESIDUAL`` × the local
     median-filtered intensity, otherwise a smooth PL peak cap is flagged
     whenever MAD collapses toward zero.
@@ -153,7 +204,8 @@ def positive_spike_mask_vs_median_smooth(
         float(np.nanmax(np.abs(y))),
         float(np.nanmax(np.abs(median_smoothed_y))),
     )
-    noise = robust_mad_noise_with_floor(residual, amplitude_reference)
+    if noise is None:
+        noise = robust_mad_noise_with_floor(residual, amplitude_reference)
     rel_floor = _MIN_RELATIVE_RESIDUAL * np.maximum(median_smoothed_y, 0.0)
     mask = residual > np.maximum(threshold_multiplier * noise, rel_floor)
     return mask.astype(bool), noise
@@ -219,29 +271,36 @@ def linear_interpolate_masked_channels_1d(
 # ---------------------------------------------------------------------------
 
 
-def remove_cosmic_rays_1d(
+def detect_cosmic_mask_1d(
     y: np.ndarray,
     *,
     kernel_size: int = 5,
     threshold: float = 5.0,
     max_passes: int = 3,
     broad_spike_width: int = 15,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Remove sharp and broad positive spikes from a single 1D spectrum.
+) -> np.ndarray:
+    """Detect sharp and broad positive spikes in a single 1D spectrum.
+
+    Pure detection — no repair — so callers that need every spectrum's mask
+    before repairing any of them (e.g. a cross-spectrum consensus veto) don't
+    pay for SNIP background estimation until they know which channels are
+    actually being repaired. :func:`remove_cosmic_rays_1d` is this function
+    followed by SNIP + repair.
 
     **Narrow pass** (up to ``max_passes`` iterations): medfilt reference with
     ``kernel_size``.  Catches spikes narrower than ``kernel_size // 2``
-    channels.
+    channels.  Uses a *local* noise estimate (blocks of
+    ``_LOCAL_NOISE_WINDOW_CHANNELS``) rather than one MAD for the whole
+    spectrum, since shot-noise-limited baselines have noise proportional to
+    sqrt(intensity) and can span an order of magnitude across one spectrum.
 
-    **Broad pass** (one pass, if ``broad_spike_width > 0``): medfilt reference
-    with ``kernel_size = 2 × broad_spike_width + 1``.  Catches spikes narrower
-    than ``broad_spike_width`` channels.  Run on the already narrow-corrected
-    signal so narrow spikes do not contaminate the broad reference.
-
-    **Repair**: uses the SNIP background as a floor — prevents the corrected
-    signal from dipping below the true spectral baseline (negative-peak
-    artefact common with pure linear interpolation across broad masked regions
-    on sloped features).
+    **Broad pass** (if ``broad_spike_width > 0``): a short kernel ladder —
+    medfilt with ``kernel_size = 4 × broad_spike_width + 1``, then
+    ``8 × broad_spike_width + 1`` — run on the already narrow-corrected
+    signal so narrow spikes do not contaminate the broad reference. The
+    second rung catches a CR whose width sits close to the first rung's own
+    kernel (where it would occupy ≥50% of the window and bias the median
+    instead of standing out from it).
 
     Parameters
     ----------
@@ -251,27 +310,22 @@ def remove_cosmic_rays_1d(
         Odd ≥ 3; medfilt window for the narrow pass.  Increase for slightly
         wider narrow spikes (e.g. 9–13 for 4–6 channel CRs).
     threshold
-        MAD multiplier.  Lower → more detections.  Default 5.0 (use 3.0–4.0
-        for clean, low-noise data).
+        Local-noise multiplier.  Lower → more detections.
     max_passes
         Maximum narrow-pass iterations.
     broad_spike_width
         Approximate maximum half-width (in channels) of broad CRs to detect.
-        The broad-pass medfilt kernel = ``4 × broad_spike_width + 1``, which
-        ensures the CR occupies < 50% of the kernel window even at its widest.
         Set to 0 to disable the broad pass entirely.
         Example: set to 15 for CRs up to 30 channels wide.
 
     Returns
     -------
-    corrected_y
-        Same shape as ``y``; unchanged if no spikes detected.
     cosmic_mask
-        Bool mask; ``True`` at all corrected channels.
+        Bool mask, same shape as ``y``; ``True`` at every flagged channel.
     """
     y1 = _coerce_float_1d_spectrum(y, kernel_size)
     if y1.size == 0 or np.all(np.isnan(y1)):
-        return y1.copy(), np.zeros(y1.shape, dtype=bool)
+        return np.zeros(y1.shape, dtype=bool)
     if threshold <= 0 or not np.isfinite(threshold):
         raise ValueError("threshold must be positive and finite")
     if max_passes < 1:
@@ -286,10 +340,17 @@ def remove_cosmic_rays_1d(
         linear_interpolate_masked_channels_1d(y1, zero_mask) if np.any(zero_mask) else y1.copy()
     )
 
+    amplitude_reference = float(np.nanmax(np.abs(y1))) if y1.size else 0.0
+    window = min(_LOCAL_NOISE_WINDOW_CHANNELS, y1.size)
+
     # ── Narrow passes (medfilt with kernel_size) ──────────────────────────
     for _ in range(max_passes):
         median_filtered = medfilt(current, kernel_size=kernel_size)
-        new_mask, _ = positive_spike_mask_vs_median_smooth(current, median_filtered, threshold)
+        residual = current - median_filtered
+        noise = local_mad_noise(residual, window, amplitude_reference=amplitude_reference)
+        new_mask, _ = positive_spike_mask_vs_median_smooth(
+            current, median_filtered, threshold, noise=noise
+        )
 
         if not np.any(new_mask):
             break
@@ -299,43 +360,110 @@ def remove_cosmic_rays_1d(
 
         if np.all(cumulative_mask):
             warnings.warn(
-                "remove_cosmic_rays_1d: all spectral channels flagged — "
-                "returning original spectrum unchanged.",
+                "detect_cosmic_mask_1d: all spectral channels flagged — "
+                "returning an unflagged mask.",
                 UserWarning,
                 stacklevel=2,
             )
-            return y1.copy(), cumulative_mask
+            return np.zeros(y1.shape, dtype=bool)
 
         # Per-pass repair keeps current clean for the next narrow pass
         current = linear_interpolate_masked_channels_1d(y1, cumulative_mask)
 
-    # ── Broad pass (large-kernel medfilt on narrow-corrected signal) ──────
+    # ── Broad pass(es) (large-kernel medfilt ladder on narrow-corrected signal) ──
     if broad_spike_width > 0:
-        # 4×W+1 ensures a CR of half-width W is < 50% of the kernel, so
-        # the median remains in the background and the CR is detectable.
-        kernel_broad = 4 * broad_spike_width + 1
-        # Cap at spectrum length; ensure odd
-        kernel_broad = min(kernel_broad, len(current))
-        if kernel_broad % 2 == 0:
-            kernel_broad -= 1
-        if kernel_broad >= 3:
+        min_run = max(3, int(round(_BROAD_MIN_RUN_FRACTION * broad_spike_width)))
+        for multiplier in _BROAD_KERNEL_MULTIPLIERS:
+            # multiplier×W+1 ensures a CR of half-width W is < 1/multiplier of
+            # the kernel, so the median remains in the background and the CR
+            # is detectable.
+            kernel_broad = multiplier * broad_spike_width + 1
+            # Cap at spectrum length; ensure odd
+            kernel_broad = min(kernel_broad, len(current))
+            if kernel_broad % 2 == 0:
+                kernel_broad -= 1
+            if kernel_broad < 3:
+                continue
             median_broad = medfilt(current, kernel_size=kernel_broad)
-            new_mask_broad, _ = positive_spike_mask_vs_median_smooth(
-                current, median_broad, threshold
+            residual_broad = current - median_broad
+            noise_broad = local_mad_noise(
+                residual_broad, window, amplitude_reference=amplitude_reference
             )
-            # Only add channels not already covered by narrow passes
+            new_mask_broad, _ = positive_spike_mask_vs_median_smooth(
+                current, median_broad, threshold, noise=noise_broad
+            )
+            # Only add channels not already covered by earlier passes
             new_mask_broad &= ~cumulative_mask
+            # A real feature's residual against this oversized reference
+            # crosses the cutoff only near its own cap — a short, isolated
+            # run. A genuine broad CR sits above the reference across
+            # nearly its whole width.
+            new_mask_broad = _drop_short_runs(new_mask_broad, min_run)
 
             if np.any(new_mask_broad):
-                new_mask_broad = _dilate_mask_1d(new_mask_broad)
+                new_mask_broad = _dilate_mask_1d(new_mask_broad, _BROAD_DILATE_CHANNELS)
                 candidate = cumulative_mask | new_mask_broad
                 if not np.all(candidate):
                     cumulative_mask = candidate
+                    current = linear_interpolate_masked_channels_1d(y1, cumulative_mask)
 
-    # ── SNIP background for repair (clamps repair to ≥ underlying baseline) ──
+    return cumulative_mask
+
+
+def repair_cosmic_mask_1d(
+    y: np.ndarray,
+    mask: np.ndarray,
+    *,
+    broad_spike_width: int = 15,
+) -> np.ndarray:
+    """Repair channels already flagged in ``mask`` via SNIP-floored interpolation.
+
+    Split out from :func:`remove_cosmic_rays_1d` so a caller that computes
+    several spectra's masks together (e.g. a cross-spectrum consensus veto
+    that must see every spectrum's mask before repairing any of them) can
+    adjust the masks first and repair after, without duplicating the SNIP
+    setup. ``broad_spike_width`` only affects the SNIP iteration count, same
+    as inside :func:`remove_cosmic_rays_1d`.
+    """
+    y1 = np.asarray(y, dtype=float)
     n_snip = max(broad_spike_width * 2, _SNIP_REPAIR_ITERATIONS_DEFAULT)
     bg_snip = snip_background_1d(y1, n_snip)
+    return repair_masked_channels_1d(y1, mask, bg_snip)
 
-    # ── Final repair ──────────────────────────────────────────────────────
-    corrected = repair_masked_channels_1d(y1, cumulative_mask, bg_snip)
+
+def remove_cosmic_rays_1d(
+    y: np.ndarray,
+    *,
+    kernel_size: int = 5,
+    threshold: float = 5.0,
+    max_passes: int = 3,
+    broad_spike_width: int = 15,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Detect and repair sharp and broad positive spikes in a single 1D spectrum.
+
+    Detection is :func:`detect_cosmic_mask_1d` (see there for parameter
+    semantics). Repair uses the SNIP background as a floor — prevents the
+    corrected signal from dipping below the true spectral baseline
+    (negative-peak artefact common with pure linear interpolation across
+    broad masked regions on sloped features).
+
+    Returns
+    -------
+    corrected_y
+        Same shape as ``y``; unchanged if no spikes detected.
+    cosmic_mask
+        Bool mask; ``True`` at all corrected channels.
+    """
+    y1 = _coerce_float_1d_spectrum(y, kernel_size)
+    if y1.size == 0 or np.all(np.isnan(y1)):
+        return y1.copy(), np.zeros(y1.shape, dtype=bool)
+
+    cumulative_mask = detect_cosmic_mask_1d(
+        y1,
+        kernel_size=kernel_size,
+        threshold=threshold,
+        max_passes=max_passes,
+        broad_spike_width=broad_spike_width,
+    )
+    corrected = repair_cosmic_mask_1d(y1, cumulative_mask, broad_spike_width=broad_spike_width)
     return corrected, cumulative_mask

@@ -6,6 +6,8 @@ from typing import Any
 
 import streamlit as st
 
+from backend.cosmic_ray import spectral_to_channels
+
 X_UNIT_OPTIONS = ["wavelength", "energy", "wavenumber", "raman_shift"]
 X_UNIT_FMT = {
     "wavelength": "Wavelength (nm)",
@@ -28,6 +30,11 @@ CRR_ENGINE_2D3D = "2D / 3D — collection & spatial"
 DENOISE_ENGINE_PCA = "PCA — population-based"
 DENOISE_ENGINE_SMOOTHER = "Smoother — per spectrum"
 
+# Below this many spectra the 1D engine's cross-spectrum consensus veto has
+# too few pixels for "consensus" to mean anything — mirrors
+# CosmicRayRemover's own routing threshold (backend/cosmic_ray/_remover.py).
+_COLLECTION_THRESHOLD_UI = 20
+
 # Defaults for keyed preprocessing widgets. Seed into session state before
 # rendering — never pass ``value=`` on the same keys (Streamlit warns when
 # both are used in one run). ``_restore_widget_state`` overwrites from
@@ -35,8 +42,12 @@ DENOISE_ENGINE_SMOOTHER = "Smoother — per spectrum"
 PIPELINE_WIDGET_DEFAULTS: dict[str, Any] = {
     "cd_n_zeros": 10,
     "crr_spike_width": 5,
-    "crr_spike_threshold": 3.5,
+    "crr_broad_spike_width": 15,
+    "crr_spike_width_nm": 0.2,
+    "crr_broad_width_nm": 2.5,
+    "crr_spike_threshold": 8.0,
     "crr_spike_passes": 3,
+    "crr_consensus_veto": True,
     "crr_map_sensitivity": 0.01,
     "crr_map_disk_radius": 3,
     "crr_map_spike_width": 5,
@@ -138,15 +149,28 @@ def render_clean_data_params() -> dict[str, Any]:
     return {"n_zeros": int(n_zeros)}
 
 
-def render_crr_params() -> dict[str, Any]:
-    """Render CosmicRayRemover parameter widgets. Returns crr_params dict."""
+def render_crr_params(
+    channel_width: float | None = None,
+    unit_label: str = "nm",
+    *,
+    n_spectra: int = 1,
+) -> dict[str, Any]:
+    """Render CosmicRayRemover parameter widgets. Returns crr_params dict.
+
+    ``channel_width`` is the loaded data's median spectral-axis spacing (in
+    ``unit_label`` units); when known, the 1D engine's spike widths are
+    entered in physical units and converted to channels per-file, so the
+    same physical cosmic-ray width is caught regardless of grating
+    dispersion. When ``None`` (e.g. nothing loaded yet), the widgets fall
+    back to plain channel counts.
+    """
     engine = st.selectbox(
         "Engine mode",
         options=[CRR_ENGINE_1D, CRR_ENGINE_2D3D],
         key="crr_engine_mode",
         help=(
             "**1D — per spectrum:** each spectrum is corrected independently "
-            "using a median filter + MAD threshold. Simple, fast, and "
+            "using a median filter + local-noise threshold. Simple, fast, and "
             "predictable for any data shape.\n\n"
             "**2D / 3D — collection & spatial:** uses the full population as "
             "a reference — global median or PCA for line scans / series; "
@@ -158,29 +182,88 @@ def render_crr_params() -> dict[str, Any]:
     force_1d = engine == CRR_ENGINE_1D
 
     with st.expander("1D engine parameters", expanded=True):
+        spike_width_units: float | None = None
+        broad_width_units: float | None = None
+        spike_width_channels: int | None = None
+        broad_width_channels: int | None = None
+
         col1, col2 = st.columns(2)
-        spike_width = col1.number_input(
-            "Spike width (channels, odd)",
-            min_value=3,
-            step=2,
-            key="crr_spike_width",
-            help=(
-                "Widest cosmic-ray spike to look for, in spectral channels "
-                "(median-filter window; must be odd). Widen it if broad "
-                "spikes survive; narrow it if sharp real peaks get clipped."
-            ),
-        )
-        if spike_width % 2 == 0:
-            spike_width += 1
-        spike_threshold = col2.number_input(
+        if channel_width:
+            spike_width_units = col1.number_input(
+                f"Narrow spike width ({unit_label})",
+                min_value=1e-4,
+                step=0.05,
+                format="%.4f",
+                key="crr_spike_width_nm",
+                help=(
+                    "Widest cosmic-ray spike to look for, in the spectrum's "
+                    "own spectral units — converted to channels using this "
+                    "file's dispersion. Widen it if broad spikes survive; "
+                    "narrow it if sharp real peaks get clipped."
+                ),
+            )
+            spike_width_channels = spectral_to_channels(
+                spike_width_units, channel_width, minimum=3, odd=True
+            )
+            col1.caption(f"≈ {spike_width_channels} channels")
+
+            broad_width_units = col2.number_input(
+                f"Broad CR width ({unit_label})",
+                min_value=0.0,
+                step=0.1,
+                format="%.4f",
+                key="crr_broad_width_nm",
+                help=(
+                    "Widest *plateau-shaped* cosmic ray to look for, beyond "
+                    "the narrow width above — catches cosmic rays that span "
+                    "many channels instead of a sharp spike. Set to 0 to "
+                    "disable this pass. Converted to channels the same way "
+                    "as the narrow width."
+                ),
+            )
+            broad_width_channels = spectral_to_channels(
+                broad_width_units, channel_width, minimum=1, odd=False
+            )
+            col2.caption(
+                f"≈ {broad_width_channels} channels" if broad_width_units > 0 else "disabled"
+            )
+        else:
+            spike_width_channels = col1.number_input(
+                "Spike width (channels, odd)",
+                min_value=3,
+                step=2,
+                key="crr_spike_width",
+                help=(
+                    "Widest cosmic-ray spike to look for, in spectral channels "
+                    "(median-filter window; must be odd). Widen it if broad "
+                    "spikes survive; narrow it if sharp real peaks get clipped."
+                ),
+            )
+            if spike_width_channels % 2 == 0:
+                spike_width_channels += 1
+            broad_width_channels = col2.number_input(
+                "Broad CR width (channels)",
+                min_value=0,
+                step=5,
+                key="crr_broad_spike_width",
+                help=(
+                    "Widest plateau-shaped cosmic ray to look for, in "
+                    "channels. Set to 0 to disable this pass."
+                ),
+            )
+
+        spike_threshold = st.number_input(
             "Detection threshold",
             min_value=0.1,
             step=0.5,
             key="crr_spike_threshold",
             help=(
-                "How far above the noise level a point must stick out to "
-                "count as a spike (threshold × estimated noise). Lower = "
-                "more aggressive; raise it if real peaks are being removed."
+                "How far above the *local* noise level a point must stick "
+                "out to count as a spike (threshold × local noise, "
+                "estimated in windows along the spectrum so it tracks "
+                "shot-noise that grows with intensity). **Higher = fewer "
+                "detections**; lower it only if faint spikes survive, and "
+                "check that real narrow peaks still come through unclipped."
             ),
         )
         spike_passes = st.number_input(
@@ -194,6 +277,20 @@ def render_crr_params() -> dict[str, Any]:
                 "neighbouring spike on the first pass."
             ),
         )
+        consensus_veto_fraction = 0.0
+        if force_1d and n_spectra >= _COLLECTION_THRESHOLD_UI:
+            protect_repeated = st.toggle(
+                "Protect repeated features",
+                key="crr_consensus_veto",
+                help=(
+                    "A cosmic ray essentially never lands on the same "
+                    "wavelength across many spectra; a real emission line "
+                    "always does. When on, any wavelength flagged as a "
+                    "spike in most spectra is treated as a real feature "
+                    "and left alone everywhere, before any repair happens."
+                ),
+            )
+            consensus_veto_fraction = 0.3 if protect_repeated else 0.0
 
     # Default values used when the 2D/3D expander is hidden
     map_sensitivity = 0.01
@@ -266,9 +363,13 @@ def render_crr_params() -> dict[str, Any]:
 
     return dict(
         force_1d=force_1d,
-        spike_width=int(spike_width),
+        spike_width=int(spike_width_channels),
+        broad_spike_width=int(broad_width_channels),
+        spike_width_units=float(spike_width_units) if spike_width_units is not None else None,
+        broad_width_units=float(broad_width_units) if broad_width_units is not None else None,
         spike_threshold=float(spike_threshold),
         spike_passes=int(spike_passes),
+        consensus_veto_fraction=float(consensus_veto_fraction),
         map_sensitivity=float(map_sensitivity),
         map_disk_radius=int(map_disk_radius),
         map_spike_width=int(map_spike_width),

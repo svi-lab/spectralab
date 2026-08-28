@@ -62,6 +62,7 @@ import streamlit as st
 from streamlit_echarts import st_echarts
 
 from backend._shared.dataset import SpectralDataset
+from backend.cosmic_ray import median_channel_width
 
 from ..charts import convert_x, make_comparison_echarts, make_final_echarts, make_progress_echarts
 from ..controls import (
@@ -147,6 +148,9 @@ def _restore_widget_state() -> None:
             ss["crr_engine_mode"] = CRR_ENGINE_1D if crr.get("force_1d", True) else CRR_ENGINE_2D3D
         for wkey, pkey in (
             ("crr_spike_width", "spike_width"),
+            ("crr_broad_spike_width", "broad_spike_width"),
+            ("crr_spike_width_nm", "spike_width_units"),
+            ("crr_broad_width_nm", "broad_width_units"),
             ("crr_spike_threshold", "spike_threshold"),
             ("crr_spike_passes", "spike_passes"),
             ("crr_map_sensitivity", "map_sensitivity"),
@@ -155,8 +159,10 @@ def _restore_widget_state() -> None:
             ("crr_map_method", "map_method"),
             ("crr_map_n_components", "map_n_components"),
         ):
-            if wkey not in ss and pkey in crr:
+            if wkey not in ss and crr.get(pkey) is not None:
                 ss[wkey] = crr[pkey]
+        if "crr_consensus_veto" not in ss and crr.get("consensus_veto_fraction") is not None:
+            ss["crr_consensus_veto"] = crr["consensus_veto_fraction"] > 0.0
 
     # ── Denoiser ──────────────────────────────────────────────────────────
     if "denoise_enabled" not in ss:
@@ -482,6 +488,25 @@ def _caption_pipeline_order() -> None:
         st.caption(f"{order}. Nothing is enabled yet — charts show raw data.")
 
 
+def _crr_axis_info(loaded: dict[str, Any]) -> tuple[float | None, str, int]:
+    """(channel_width, unit_label, n_spectra) for the CRR widgets.
+
+    Picks the first loaded file as representative — same convention as the
+    ``ref_ds`` used for the right-column charts. ``channel_width`` is None
+    when nothing is loaded yet or the axis can't be resolved (e.g. a single
+    channel), so ``render_crr_params`` falls back to plain channel widgets.
+    """
+    if not loaded:
+        return None, "nm", 1
+    ds: SpectralDataset = next(iter(loaded.values()))["dataset"]
+    n_spectra = int(np.prod([n for dim, n in zip(ds.dims, ds.shape) if dim != ds.spectral_dim]))
+    try:
+        channel_width = median_channel_width(ds.da, ds.spectral_dim)
+    except ValueError:
+        channel_width = None
+    return channel_width, ds.spectral_unit, max(n_spectra, 1)
+
+
 def _render_stage_tabs(
     processing_ok: bool,
     loaded: dict[str, Any],
@@ -553,7 +578,8 @@ def _render_stage_tabs(
             )
             crr_params: dict[str, Any] = {}
             if crr_enabled:
-                crr_params = render_crr_params()
+                channel_width, unit_label, n_spectra = _crr_axis_info(loaded)
+                crr_params = render_crr_params(channel_width, unit_label, n_spectra=n_spectra)
 
         # ── Denoising ─────────────────────────────────────────────────────
         with tab_dn:
